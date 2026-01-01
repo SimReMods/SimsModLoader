@@ -1,0 +1,89 @@
+name: build
+
+on:
+  push:
+    branches: [master]
+    tags: ['v*', '[0-9]*']
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: write   # creating the GitHub Release on a tag
+
+env:
+  MSVC_TOOLSET: '14.40'                                         # vcvars -vcvars_ver
+  MSVC_COMPONENT: Microsoft.VisualStudio.Component.VC.14.40.17.10.x86.x64
+  CL_VERSION_PREFIX: '19.40.'                                   # what cl.exe must report
+
+jobs:
+  build:
+    runs-on: windows-2022
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Version from the tag (1.0.0 / v1.0.0), else 0.0.0-dev.<sha>
+        shell: pwsh
+        run: |
+          $v = if ($env:GITHUB_REF_TYPE -eq 'tag') { $env:GITHUB_REF_NAME -replace '^v', '' } else { "0.0.0-dev.$("${env:GITHUB_SHA}".Substring(0, 7))" }
+          if ($env:GITHUB_REF_TYPE -eq 'tag' -and $v -notmatch '^\d+\.\d+\.\d+') { throw "tag must look like 1.2.3 or v1.2.3, got $env:GITHUB_REF_NAME" }
+          "MOD_VERSION=$v" >> $env:GITHUB_ENV
+          Write-Host "version $v"
+
+      - name: Install the MSVC 14.40 toolset if the runner image lacks it
+        shell: pwsh
+        run: |
+          $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
+          $vs = & $vswhere -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath
+          $have = Get-ChildItem "$vs\VC\Tools\MSVC" -Directory | Where-Object Name -like "$env:MSVC_TOOLSET.*"
+          if ($have) { Write-Host "found: $($have.Name -join ', ')"; exit 0 }
+          Write-Host "installing $env:MSVC_COMPONENT into $vs"
+          $p = Start-Process -Wait -PassThru "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vs_installer.exe" `
+                 -ArgumentList 'modify', '--installPath', "`"$vs`"", '--add', $env:MSVC_COMPONENT, '--quiet', '--norestart', '--nocache'
+          if ($p.ExitCode -ne 0 -and $p.ExitCode -ne 3010) { throw "vs_installer failed: $($p.ExitCode)" }
+
+      - name: x86 developer environment (pinned toolset)
+        uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: x86
+          toolset: ${{ env.MSVC_TOOLSET }}
+
+      - name: Check the compiler version
+        shell: pwsh
+        run: |
+          $banner = (& cl 2>&1 | Out-String)
+          Write-Host $banner
+          if ($banner -notmatch [regex]::Escape("Version $env:CL_VERSION_PREFIX")) {
+            throw "expected cl $env:CL_VERSION_PREFIX*, got a different compiler"
+          }
+
+      - name: Build modloader
+        shell: cmd
+        run: modloader\build.bat
+
+      - name: Build example_mod
+        shell: cmd
+        run: mods\example_mod\build.bat
+
+      - name: Build visit_lots
+        shell: cmd
+        run: mods\visit_lots\build.bat
+
+      - name: Package
+        shell: pwsh
+        run: |
+          python package.py $env:MOD_VERSION
+          Get-FileHash dist\*.zip, modloader\build\winmm.dll, mods\visit_lots\build\visit_lots.dll -Algorithm SHA256 |
+            Format-Table Hash, Path -AutoSize | Out-String -Width 300
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: sims-visitlots
+          path: |
+            dist/*.zip
+            mods/example_mod/build/example_mod.dll
+
+      - name: Publish the GitHub Release (tags only)
+        if: github.ref_type == 'tag'
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/*.zip
