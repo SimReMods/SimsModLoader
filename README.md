@@ -22,7 +22,7 @@ late your Sims go home. The visited home is never saved.
 
 ### Install
 
-1. Download `sims-visitlots-<version>.zip` from **Releases** (right-hand side of this page).
+1. Download [`sims-visitlots-<version>.zip`](https://github.com/SimReMods/SimsModLoader/releases/download/1.0.0/sims-visitlots-1.0.0.zip).
 2. In Steam, right-click **The Sims Legacy Collection** → **Manage** → **Browse local files**.
 3. Copy everything from the zip into that folder, merging folders. Replace files only when upgrading the mod; on a
    fresh install nothing should need replacing.
