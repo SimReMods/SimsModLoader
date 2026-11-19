@@ -68,16 +68,20 @@ jobs:
         shell: cmd
         run: mods\visit_lots\build.bat
 
+      - name: Build multistory
+        shell: cmd
+        run: mods\multistory\build.bat
+
       - name: Package
         shell: pwsh
         run: |
-          python package.py $env:MOD_VERSION
-          Get-FileHash dist\*.zip, modloader\build\winmm.dll, mods\visit_lots\build\visit_lots.dll -Algorithm SHA256 |
+          python package.py
+          Get-FileHash dist\*.zip, modloader\build\winmm.dll, mods\visit_lots\build\visit_lots.dll, mods\multistory\build\multistory.dll -Algorithm SHA256 |
             Format-Table Hash, Path -AutoSize | Out-String -Width 300
 
       - uses: actions/upload-artifact@v4
         with:
-          name: sims-visitlots
+          name: sims-mods
           path: |
             dist/*.zip
             mods/example_mod/build/example_mod.dll

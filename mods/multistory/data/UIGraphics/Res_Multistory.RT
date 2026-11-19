@@ -1,0 +1,4 @@
+{INCLUDE,Res_Multistory.h}
+
+{RLEBMP,kMultistoryStoryDown,"Multistory/StoryDown.bmp"}
+{RLEBMP,kMultistoryStoryUp,"Multistory/StoryUp.bmp"}
