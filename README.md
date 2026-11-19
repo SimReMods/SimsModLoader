@@ -2,7 +2,7 @@
 
 A mod loader for The Sims 1 Legacy Collection: a drop-in `winmm.dll` that patches the game in memory while it runs
 and loads mods from a `mods` folder, without changing any of the game's files on disk. This repository contains the
-loader and its first mod, Visit Lots.
+loader and two mods: Visit Lots and 4 Stories.
 
 ## Visit Lots mod
 
@@ -22,14 +22,14 @@ late your Sims go home. The visited home is never saved.
 
 ### Install
 
-1. Download [`sims-visitlots-<version>.zip`](https://github.com/SimReMods/SimsModLoader/releases/download/1.0.0/sims-visitlots-1.0.0.zip).
+1. Download [`sims-visitlots.zip`](https://github.com/SimReMods/SimsModLoader/releases/latest/download/sims-visitlots.zip).
 2. In Steam, right-click **The Sims Legacy Collection** → **Manage** → **Browse local files**.
 3. Copy everything from the zip into that folder, merging folders. Replace files only when upgrading the mod; on a
    fresh install nothing should need replacing.
 
 ### Uninstall
 
-With the game closed, delete these files from the game folder:
+With the game closed, delete these files from the game folder (keep `winmm.dll` if another mod is still installed):
 
 ```
 winmm.dll
@@ -47,10 +47,51 @@ ExpansionShared\HDSI_Ask.iff
 
 If you report a problem, attach `mod.log` from the game folder.
 
+## 4 Stories mod
+
+Lots get two more stories (3 and 4) on top of the original two. Build, buy and live mode work on every story. The
+story buttons in the view control become "one story down" / "one story up", PgUp / PgDn move one story, and Tab cycles
+up through the stories. A room built on a story above leaves no roof under it, with or without a floor.
+
+> **Only works with The Sims 1 Legacy Collection from Steam, version 1.10.7.0.** It will not work with the Complete
+> Collection, the EA app version or cracked versions.
+
+> **Back up your saves first.** With the game closed, copy `%USERPROFILE%\Saved Games\Electronic Arts\The Sims 25`
+> somewhere safe.
+
+> **A lot with anything on stories 3-4 needs the mod to load.** Without it, the game crashes on that lot. Removing
+> everything above the second story should let you load it without the mod, but there is no guarantee there won't be
+> other bugs.
+
+### Install
+
+1. Download [`sims-multistory.zip`](https://github.com/SimReMods/SimsModLoader/releases/latest/download/sims-multistory.zip).
+2. In Steam, right-click **The Sims Legacy Collection** → **Manage** → **Browse local files**.
+3. Copy everything from the zip into that folder, merging folders. It can be installed together with Visit Lots (both
+   zips contain the same `winmm.dll`).
+
+### Uninstall
+
+With the game closed, delete these files from the game folder (keep `winmm.dll` if another mod is still installed):
+
+```
+winmm.dll
+README-MULTISTORY.txt
+mod.log
+mods\multistory.dll
+UIGraphics\Res_Multistory.RT
+UIGraphics\Res_Multistory.h
+UIGraphics\Multistory\StoryDown.bmp
+UIGraphics\Multistory\StoryUp.bmp
+```
+
+If you report a problem, attach `mod.log` from the game folder.
+
 ## For developers
 
 The `winmm.dll` loader (`modloader/`) patches the game in memory and loads `mods\*.dll`; nothing on disk is changed.
-`mods/visit_lots/` is the mod, `mods/example_mod/` a minimal example. Build each with its `build.bat` from the
-"x86 Native Tools Command Prompt for VS 2022", then `python package.py <version>` makes the release zip.
+`mods/visit_lots/` and `mods/multistory/` are the mods, `mods/example_mod/` a minimal example. Build each with its
+`build.bat` from the "x86 Native Tools Command Prompt for VS 2022", then `python package.py` makes one release zip
+per mod.
 
 > **This project has been coded using AI coding tools.**
