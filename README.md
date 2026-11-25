@@ -2,7 +2,7 @@
 
 A mod loader for The Sims 1 Legacy Collection: a drop-in `winmm.dll` that patches the game in memory while it runs
 and loads mods from a `mods` folder, without changing any of the game's files on disk. This repository contains the
-loader and two mods: Visit Lots and 4 Stories.
+loader and three mods: Visit Lots, 4 Stories and Eyedropper.
 
 ## Visit Lots mod
 
@@ -87,10 +87,42 @@ UIGraphics\Multistory\StoryUp.bmp
 
 If you report a problem, attach `mod.log` from the game folder.
 
+## Eyedropper mod
+
+In build and buy mode, click the eyedropper button (below undo / redo in the build panel) or press `E`, then click an
+object, a floor or a wall on the lot: its catalog entry gets selected (the object on the cursor, the floor tool with
+that floor, the wallpaper tool with that wallpaper; Shift-click a wall for its wall type). `Esc` puts the previous tool
+back. The mod changes no files and no save data.
+
+> **Only works with The Sims 1 Legacy Collection from Steam, version 1.10.7.0.**
+
+### Install
+
+1. Download [`sims-eyedropper.zip`](https://github.com/SimReMods/SimsModLoader/releases/latest/download/sims-eyedropper.zip).
+2. In Steam, right-click **The Sims Legacy Collection** → **Manage** → **Browse local files**.
+3. Copy everything from the zip into that folder, merging folders. It can be installed together with the other mods.
+
+### Uninstall
+
+With the game closed, delete these files from the game folder (keep `winmm.dll` if another mod is still installed):
+
+```
+winmm.dll
+README-EYEDROPPER.txt
+mod.log
+mods\eyedropper.dll
+UIGraphics\Res_Eyedropper.RT
+UIGraphics\Res_Eyedropper.h
+UIGraphics\Eyedropper\EyedropperBtn.bmp
+UIGraphics\Eyedropper\Eyedropper.cur
+```
+
+If you report a problem, attach `mod.log` from the game folder.
+
 ## For developers
 
 The `winmm.dll` loader (`modloader/`) patches the game in memory and loads `mods\*.dll`; nothing on disk is changed.
-`mods/visit_lots/` and `mods/multistory/` are the mods, `mods/example_mod/` a minimal example. Build each with its
+`mods/visit_lots/`, `mods/multistory/` and `mods/eyedropper/` are the mods, `mods/example_mod/` a minimal example. Build each with its
 `build.bat` from the "x86 Native Tools Command Prompt for VS 2022", then `python package.py` makes one release zip
 per mod.
 

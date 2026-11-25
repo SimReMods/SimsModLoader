@@ -72,11 +72,15 @@ jobs:
         shell: cmd
         run: mods\multistory\build.bat
 
+      - name: Build eyedropper
+        shell: cmd
+        run: mods\eyedropper\build.bat
+
       - name: Package
         shell: pwsh
         run: |
           python package.py
-          Get-FileHash dist\*.zip, modloader\build\winmm.dll, mods\visit_lots\build\visit_lots.dll, mods\multistory\build\multistory.dll -Algorithm SHA256 |
+          Get-FileHash dist\*.zip, modloader\build\winmm.dll, mods\visit_lots\build\visit_lots.dll, mods\multistory\build\multistory.dll, mods\eyedropper\build\eyedropper.dll -Algorithm SHA256 |
             Format-Table Hash, Path -AutoSize | Out-String -Width 300
 
       - uses: actions/upload-artifact@v4

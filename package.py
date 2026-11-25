@@ -1,6 +1,6 @@
 """Assemble the release zips from the built DLLs, the mods' data and the release READMEs.
 
-    python package.py      -> dist/sims-visitlots.zip, dist/sims-multistory.zip
+    python package.py      -> dist/sims-visitlots.zip, dist/sims-multistory.zip, dist/sims-eyedropper.zip
 
 The names carry no version, so .../releases/latest/download/<name> always gets the newest release.
 
@@ -17,6 +17,7 @@ FIXED_TIME = (2000, 1, 1, 0, 0, 0)
 PACKAGES = {
     'visitlots': ('visit_lots', 'visit_lots.dll', 'README-MOD.txt'),
     'multistory': ('multistory', 'multistory.dll', 'README-MULTISTORY.txt'),
+    'eyedropper': ('eyedropper', 'eyedropper.dll', 'README-EYEDROPPER.txt'),
 }
 
 
