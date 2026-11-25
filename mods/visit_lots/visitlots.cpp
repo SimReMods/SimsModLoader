@@ -16,7 +16,13 @@
 #include "game_api.h"
 #include "LotVisit.h"
 #include "LotVisitText.h"
+#if GAME_EA
+#include "gen_sigs_ea.h"
+#else
 #include "gen_sigs.h"
+#endif
+
+extern "C" __declspec(dllexport) const unsigned SimsMod_Games = GAME_EA ? SIMSMOD_GAME_LEGACY_EA : SIMSMOD_GAME_LEGACY;
 
 unsigned ga::g_exeBase;
 static const SimsLoaderApi *s_api;

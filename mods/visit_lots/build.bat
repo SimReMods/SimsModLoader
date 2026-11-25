@@ -16,3 +16,7 @@ rc /nologo /i build /fo build\version.res version.rc || exit /b 1
 cl /nologo /Brepro /c /MT /GS /EHsc /O2 /Oy- /std:c++17 /W3 /wd4996 /Fobuild\ visitlots.cpp LotVisit.cpp LotVisitText.cpp || exit /b 1
 link /nologo /Brepro /DLL /MACHINE:X86 /OPT:REF /OPT:ICF /OUT:build\visit_lots.dll build\visitlots.obj build\LotVisit.obj build\LotVisitText.obj build\version.res kernel32.lib user32.lib || exit /b 1
 echo built build\visit_lots.dll (version %V%)
+if not exist build\ea mkdir build\ea
+cl /nologo /Brepro /c /MT /GS /EHsc /O2 /Oy- /std:c++17 /W3 /wd4996 /DGAME_EA=1 /Fobuild\ea\ visitlots.cpp LotVisit.cpp LotVisitText.cpp || exit /b 1
+link /nologo /Brepro /DLL /MACHINE:X86 /OPT:REF /OPT:ICF /OUT:build\ea\visit_lots_ea.dll build\ea\visitlots.obj build\ea\LotVisit.obj build\ea\LotVisitText.obj build\version.res kernel32.lib user32.lib || exit /b 1
+echo built build\ea\visit_lots_ea.dll (version %V%)

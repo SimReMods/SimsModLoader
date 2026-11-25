@@ -4,6 +4,17 @@
 #pragma once
 #include <stddef.h>
 
+// GAME_EA=1: the Legacy Collection from the EA app - the Steam code relinked at other addresses (game_addr_ea.h is
+// generated from game_addr.h by tools/port_addrs.py); class layouts are the same.
+#ifndef GAME_EA
+#define GAME_EA 0
+#endif
+#if GAME_EA
+#define GA_ADDR_FILE "game_addr_ea.h"
+#else
+#define GA_ADDR_FILE "game_addr.h"
+#endif
+
 #pragma warning(push)
 #pragma warning(disable : 4201)     // anonymous structs: the fields below are union members at explicit offsets
 
@@ -30,7 +41,7 @@ namespace ga
 #define GA_RTTI(n, va, s) n = va,
 #define GA_VTBL(n, va) n = va,
 #define GA_VSLOT(n, vt, slot, fn) n = slot,
-#include "game_addr.h"
+#include GA_ADDR_FILE
 #undef GA_FN
 #undef GA_DATA
 #undef GA_CALL
