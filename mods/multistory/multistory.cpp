@@ -1,4 +1,5 @@
-// multistory.cpp - mods\multistory_steam.dll: lots with 4 stories (SimsModLoader mod).
+// multistory.cpp - mods\multistory_steam.dll (Steam) / multistory_ea.dll (EA app, GAME_EA=1): lots with 4 stories
+// (SimsModLoader mod).
 // The game is reached through ms_game_api.h (generated). Stories 3-4 live in one side block per class (g_blk*):
 // msstubs.asm redirects the per-story array accesses there, ms_patches.h raises the story limits, ms_pick.asm picks
 // the clicked story; the hooks below do the rest.
@@ -9,8 +10,27 @@
 #include <map>
 #include <algorithm>
 #include "simsmod.h"
+#ifndef GAME_EA
+#define GAME_EA 0
+#endif
+#if GAME_EA
+#include "ms_game_api_ea.h"     // ported by tools/port_multistory.py
+#include "ms_patches_ea.h"
+#include "ms_va_ea.h"
+#define MS_EXE_SPAN 0xc00000
+#else
 #include "ms_game_api.h"
 #include "ms_patches.h"
+#define MSVA_IconDownPush 0x4f583b
+#define MSVA_IconUpPush   0x4f588f
+#define MSVA_PickA        0x55f933
+#define MSVA_PickB        0x55f94b
+#define MSVA_PickRetA     0x55f946
+#define MSVA_PickRetB     0x55f950
+#define MS_EXE_SPAN 0x800000
+#endif
+
+extern "C" __declspec(dllexport) const unsigned SimsMod_Games = GAME_EA ? SIMSMOD_GAME_LEGACY_EA : SIMSMOD_GAME_LEGACY;
 
 extern "C" IMAGE_DOS_HEADER __ImageBase;
 unsigned int ms_exe_base;                           // used by ms_game_api.h's wrappers
@@ -973,8 +993,8 @@ static void InstallStoryIcons()
         }
     }
     struct { unsigned rva; int nFrom, nTo; } patches[] = {
-        { 0x4f583b - 0x400000, 2023, kMsIconStoryDown },   // push kLevel1 -> m_hFirstStoryImage ("one story down")
-        { 0x4f588f - 0x400000, 2024, kMsIconStoryUp },     // push kLevel2 -> m_hSecondStoryImage ("one story up")
+        { MSVA_IconDownPush - 0x400000, 2023, kMsIconStoryDown },   // push kLevel1 -> m_hFirstStoryImage ("one story down")
+        { MSVA_IconUpPush - 0x400000, 2024, kMsIconStoryUp },     // push kLevel2 -> m_hSecondStoryImage ("one story up")
     };
     for (auto &p : patches)
         if (memcmp(Exe(p.rva), &p.nFrom, 4))
@@ -1020,12 +1040,12 @@ static int InstallSitesAndPatches()
         if (WriteExe(g_msBytePatches[i].rva, g_msBytePatches[i].to, g_msBytePatches[i].len)) nPatches++;
         else { ModLog("[multistory] byte patch %s: write failed", g_msBytePatches[i].what); g_nFailed++; }
     }
-    ms_pick_ret_a = g_api->exeBase + (0x55f946 - 0x400000);
-    ms_pick_ret_b = g_api->exeBase + (0x55f950 - 0x400000);
+    ms_pick_ret_a = g_api->exeBase + (MSVA_PickRetA - 0x400000);
+    ms_pick_ret_b = g_api->exeBase + (MSVA_PickRetB - 0x400000);
     if (!Skip("pick"))
     {
-        MS_CODEPATCH(0x55f933, 10, "bb 03 00 00 00 e9 d3 00 00 00", ms_pick_a);
-        MS_CODEPATCH(0x55f94b, 5, "bb 02 00 00 00", ms_pick_b);
+        MS_CODEPATCH(MSVA_PickA, 10, "bb 03 00 00 00 e9 d3 00 00 00", ms_pick_a);
+        MS_CODEPATCH(MSVA_PickB, 5, "bb 02 00 00 00", ms_pick_b);
     }
     if (!Skip("icons")) InstallStoryIcons();
     ModLog("[multistory] %d access stubs, %d byte patches installed", nSites, nPatches);
@@ -1083,7 +1103,7 @@ static LONG CALLBACK CrashLogger(EXCEPTION_POINTERS *ep)
     CONTEXT *c = ep->ContextRecord;
     unsigned eip = c->Eip, dll = (unsigned)&__ImageBase;
     char where[64];
-    if (eip - g_api->exeBase < 0x800000) sprintf(where, "Sims.exe 0x%06x (va 0x%06x)", eip - g_api->exeBase, eip - g_api->exeBase + 0x400000);
+    if (eip - g_api->exeBase < MS_EXE_SPAN) sprintf(where, "Sims.exe 0x%06x (va 0x%06x)", eip - g_api->exeBase, eip - g_api->exeBase + 0x400000);
     else if (eip - dll < 0x100000) sprintf(where, "multistory.dll +0x%x", eip - dll);
     else sprintf(where, "0x%08x", eip);
     ModLog("[multistory] EXCEPTION 0x%08x at %s, address 0x%08x (%s)", code, where,
@@ -1095,7 +1115,7 @@ static LONG CALLBACK CrashLogger(EXCEPTION_POINTERS *ep)
     {
         unsigned v = 0;
         __try { v = sp[i]; } __except (EXCEPTION_EXECUTE_HANDLER) { break; }
-        if (v - g_api->exeBase < 0x800000) ModLog("[multistory]   stack +%02x: exe va 0x%06x", i * 4, v - g_api->exeBase + 0x400000);
+        if (v - g_api->exeBase < MS_EXE_SPAN) ModLog("[multistory]   stack +%02x: exe va 0x%06x", i * 4, v - g_api->exeBase + 0x400000);
         else if (v - dll < 0x100000) ModLog("[multistory]   stack +%02x: dll +0x%x", i * 4, v - dll);
     }
     return EXCEPTION_CONTINUE_SEARCH;
