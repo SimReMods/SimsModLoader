@@ -6,7 +6,16 @@
 #include <new>
 #include "simsmod.h"
 #include "game_api.h"
+#if GAME_CC
+#include "gen_sigs_cc.h"
+#elif GAME_EA
+#include "gen_sigs_ea.h"
+#else
 #include "gen_sigs.h"
+#endif
+
+extern "C" __declspec(dllexport) const unsigned SimsMod_Games =
+    GAME_CC ? SIMSMOD_GAME_COMPLETE : GAME_EA ? SIMSMOD_GAME_LEGACY_EA : SIMSMOD_GAME_LEGACY;
 
 unsigned ga::g_exeBase;
 static const SimsLoaderApi *s_api;
@@ -203,18 +212,24 @@ bool FindFloor(const FTilePt &pt, int nLevel, Pick *pOut)
     return true;
 }
 
-cXObject *ObjectUnder(ScreenPt16 pt)
+cXObject *ObjectUnder(ScreenPt16 pt, int nLevel)
 {
     HouseViewer *pViewer = Settings()->m_pHouseViewer;
     if (pt.nX < pViewer->m_ViewRect.left || pt.nX >= pViewer->m_ViewRect.right || pt.nY < pViewer->m_ViewRect.top ||
         pt.nY >= pViewer->m_ViewRect.bottom)
         return 0;
+#if GAME_CC
+    int nId = GViewer::PointToObjectID(pt, nLevel);
+    cXObject *pObject = nId > 0 ? cTool::ToolGetObject(nId) : 0;
+#else
+    (void)nLevel;
     PickHitResult hit;
     if (!pViewer->m_RenderContext.HitTestScreenPoint(pt.nX, pt.nY, &hit) || !hit.m_pRecord || hit.m_fDepth >= 1.0f)
         return 0;
     if (hit.m_pRecord->m_pMeshItem || !hit.m_pRecord->m_pDrawItem)
         return 0;
     cXObject *pObject = reinterpret_cast<ObjectHandle *>(hit.m_pRecord->m_pDrawItem)->Resolve();
+#endif
     if (!pObject || DynCast(pObject, A::TD_cXPerson))
         return 0;
     return pObject;
@@ -259,7 +274,7 @@ Pick PickAt(ScreenPt16 pt)
     int nLevel = cTool::GetCurrentLevel();
     if (nLevel < 1)
         nLevel = 1;
-    cXObject *pObject = ObjectUnder(pt);
+    cXObject *pObject = ObjectUnder(pt, nLevel);
     Pick wall;
     memset(&wall, 0, sizeof(wall));
     FTilePt floorPt;
@@ -485,8 +500,8 @@ const unsigned long kEyedropperMsg_EnterWorld = 0x45594544;
 const unsigned int kToolUpdateFlags = 0x630;
 
 // [0] the game's RTTI locator, then the game's slots with some replaced (thiscall as __fastcall, edx unused)
-void *s_ToolVtbl[1 + 30];
-void *s_BtnVtbl[1 + 105];
+void *s_ToolVtbl[1 + A::cTool__vftable_Slots];
+void *s_BtnVtbl[1 + A::cTSWinBtn__vftable_Slots];
 void *s_pfnBtnTSOnCommand, *s_pfnBtnTSPaint;
 
 struct EyeBtn;
@@ -521,7 +536,7 @@ int EyedropperCursor()
     if (GetFileAttributesA(szPath) != INVALID_FILE_ATTRIBUTES)
     {
         cTSCursorManager *pMgr = WinMgr() ? WinMgr()->m_pCursorMgr : 0;
-        if (pMgr && (pMgr->GetCursor(kEyedropperCursorId) || pMgr->AddCursor(cTSString(szPath), kEyedropperCursorId)))
+        if (pMgr && (pMgr->GetCursor(kEyedropperCursorId) || pMgr->AddCursorFromFile(szPath, kEyedropperCursorId)))
             s_nCursor = kEyedropperCursorId;
     }
     return s_nCursor;
@@ -723,10 +738,7 @@ EyeBtn *EnsureButton(cWinArch *pArch)
     pBtn->m_nEnterWorldRetries = 0;
     s_pButton = pBtn;
     cTSWinBtn *pWin = pBtn->Btn();
-    cTSBufferRef hImage = cTSBufferRef::LoadById(kEyedropperBtnImage);
-    bool bHaveImage = hImage.m_p != 0;
-    if (bHaveImage)
-        pWin->SetImage(hImage, 4, 1);
+    bool bHaveImage = pWin->SetImageById(kEyedropperBtnImage, 4, 1);
     pWin->m_nCommandTrigger = kBtnTrigger_OnPress;
     pWin->m_nMode = 1;
     pWin->SetToolTipsText(cTSString(Eyedropper_ToolTip()));
@@ -845,7 +857,7 @@ static const VSlot s_VSlots[] = {
 #define GA_RTTI(n, va, s)
 #define GA_VTBL(n, va, slots)
 #define GA_VSLOT(n, vt, slot, va) { #n, A::vt, slot, va },
-#include "game_addr.h"
+#include GA_ADDR_FILE
 #undef GA_FN
 #undef GA_DATA
 #undef GA_CRT
@@ -881,10 +893,10 @@ static int CheckGame()
             s_api->Log("[eyedropper] %s: vtable 0x%06x slot %u is not 0x%06x", v.pszName, v.vtbl, v.slot, v.va);
             ++nBad;
         }
-    const unsigned char *pSite = (const unsigned char *)Va(0x60ac8e);
+    const unsigned char *pSite = (const unsigned char *)Va(A::RTDynamicCast_Site);
     if (pSite[0] != 0xE8 || pSite + 5 + *(const int *)(pSite + 1) != Va(A::RTDynamicCast))
     {
-        s_api->Log("[eyedropper] __RTDynamicCast: the call at 0x60ac8e does not reach 0x%06x", A::RTDynamicCast);
+        s_api->Log("[eyedropper] __RTDynamicCast: the call at 0x%06x does not reach 0x%06x", A::RTDynamicCast_Site, A::RTDynamicCast);
         ++nBad;
     }
     static const struct { unsigned td; const char *psz; } s_Rtti[] = {
@@ -906,7 +918,7 @@ static void CopyVtbl(void **pDst, unsigned va, unsigned nSlots)
 
 static void BuildVtables()
 {
-    CopyVtbl(s_ToolVtbl, A::cTool__vftable, 30);
+    CopyVtbl(s_ToolVtbl, A::cTool__vftable, A::cTool__vftable_Slots);
     void **t = s_ToolVtbl + 1;
     t[A::Slot_Tool_Dtor] = (void *)&T_Dtor;
     t[A::Slot_Tool_Select] = (void *)&T_Select;
@@ -919,7 +931,7 @@ static void BuildVtables()
     t[A::Slot_Tool_OnExitWorld] = (void *)&T_OnExitWorld;
     t[A::Slot_Tool_Cancel] = (void *)&T_Cancel;
     t[A::Slot_Tool_ControlsOwnToolTips] = (void *)&T_ControlsOwnToolTips;
-    CopyVtbl(s_BtnVtbl, A::cTSWinBtn__vftable, 105);
+    CopyVtbl(s_BtnVtbl, A::cTSWinBtn__vftable, A::cTSWinBtn__vftable_Slots);
     void **b = s_BtnVtbl + 1;
     s_pfnBtnTSOnCommand = b[A::Slot_Win_TSOnCommand];
     s_pfnBtnTSPaint = b[A::Slot_Win_TSPaint];
