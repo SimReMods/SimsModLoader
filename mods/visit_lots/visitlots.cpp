@@ -1,4 +1,5 @@
-// visitlots.cpp - mods\visit_lots_steam.dll / visit_lots_ea.dll: visiting another family's home lot (LotVisit.h), as a patch mod.
+// visitlots.cpp - mods\visit_lots_steam.dll / visit_lots_ea.dll / visit_lots_cc.dll: visiting another family's home lot
+// (LotVisit.h), as a patch mod.
 //
 // Every original function keeps running as the exe's own code. The mod changes it in one of three ways:
 //   wrapper  - the function's entry is detoured to a W_* function here, which applies the feature's rule and calls
@@ -9,6 +10,8 @@
 //              that resumes at a GA_LABEL of the same function.
 // Each site has a 16-byte signature (gen_sigs.h, made from the game build this mod is for); all of them are checked
 // on the running game first, and nothing is patched unless every one matches.
+// GAME_CC (the 2003 Complete Collection): the same hooks on the 2003 code; where it differs (other callee, registers or
+// stack layout at a stub site) the 2003 variant is under #if GAME_CC next to the Legacy one.
 #include <windows.h>
 #include <stdio.h>
 #include <string.h>
@@ -16,13 +19,16 @@
 #include "game_api.h"
 #include "LotVisit.h"
 #include "LotVisitText.h"
-#if GAME_EA
+#if GAME_CC
+#include "gen_sigs_cc.h"
+#elif GAME_EA
 #include "gen_sigs_ea.h"
 #else
 #include "gen_sigs.h"
 #endif
 
-extern "C" __declspec(dllexport) const unsigned SimsMod_Games = GAME_EA ? SIMSMOD_GAME_LEGACY_EA : SIMSMOD_GAME_LEGACY;
+extern "C" __declspec(dllexport) const unsigned SimsMod_Games =
+    GAME_CC ? SIMSMOD_GAME_COMPLETE : GAME_EA ? SIMSMOD_GAME_LEGACY_EA : SIMSMOD_GAME_LEGACY;
 
 unsigned ga::g_exeBase;
 static const SimsLoaderApi *s_api;
@@ -62,14 +68,46 @@ static void __fastcall W_AppendInteractionsForAuto(ObjTestSim *p, void *, void *
     o_AppendInteractionsForAuto(p, pOut);
     s_aifa = nSaved;
 }
+#if GAME_CC
+// The 2003 code tests cSimulator::IsCurrentLotResidential() (zoning == 1) at both places instead.
+// first test (`!residential` selects the flag-5 visitor rule)
+static bool __fastcall C_AifaResidential1(cSimulator *s, void *)
+{
+    return s_aifa ? false : s->IsCurrentLotResidential();
+}
+#else
 // first zoning test (`zoning != 1` selects the flag-5 visitor rule)
 static int __fastcall C_AifaZoning1(Neighborhood *n, void *, int nHouse)
 {
     return s_aifa ? 2 : n->GetZoningType(nHouse);
 }
+#endif
 // second zoning test: `zoning != 1 || !personType || human || greeted || no room` -> append, else skip. For a guest the
 // rule is MayEnter alone, which no return value can express, hence the stub.
 static void *s_vaGetZoningType, *s_vaAifaAppend, *s_vaAifaSkip;
+#if GAME_CC
+static void *s_vaIsCurrentLotResidential;
+// ASM: replaces `call cSimulator::IsCurrentLotResidential` in the autonomy scan (`residential && personType && pet && !greeted
+// && room` -> skip); a guest continues at the push_back or at the next entry. Stack on entry:
+// [ret] (thiscall, no arguments), so dropping it restores the caller's esp. Registers live at both targets: esi (this),
+// edi (entry), ebx (bl: the pet flag), ebp (frame); none is touched here.
+__declspec(naked) static void S_AifaResidential2()
+{
+    __asm
+    {
+        cmp s_aifa, 0
+        jne guest
+        jmp dword ptr [s_vaIsCurrentLotResidential]    // not a guest: the original call
+    guest:
+        add esp, 4
+        cmp s_aifa, 1
+        jne skip
+        jmp dword ptr [s_vaAifaAppend]
+    skip:
+        jmp dword ptr [s_vaAifaSkip]
+    }
+}
+#else
 // ASM: replaces `call Neighborhood::GetZoningType` at 0x60abbf; a guest skips the rest of the test and continues at
 // the push_back (0x60abfc) or at the next entry (0x60ac4e). Stack on entry: [ret][house]; GetZoningType is thiscall,
 // so dropping both restores the caller's esp. Registers live at both targets: ebx (out), esi (entry), edi (this),
@@ -90,6 +128,7 @@ __declspec(naked) static void S_AifaZoning2()
         jmp dword ptr [s_vaAifaSkip]
     }
 }
+#endif
 
 // A guest never leaves the lot on its own (BlocksInteraction) and gets the non-residential visitor rule (TTAB flag 5).
 static volatile int s_tiGuest;
@@ -139,7 +178,7 @@ static void __fastcall W_AddToKillQueue(ObjectModule *m, void *, short nObjectId
 }
 
 // LotVisit::Tick, then the selected-person check with the visit's rule. The original's check (the call to
-// AdvanceSelectedPerson at 0x5315b1) is disabled by C_PostSimNoAdvance.
+// AdvanceSelectedPerson at 0x5315b1; 2003: two calls) is disabled by C_PostSimNoAdvance.
 ORIG(PostSim, bool(__thiscall *)(ObjectModule *, bool));
 static bool __fastcall W_PostSim(ObjectModule *m, void *, bool bSkipDeletes)
 {
@@ -341,6 +380,29 @@ static bool __cdecl Q_ConfirmLeaving() { return LotVisit::ConfirmLeaving(); }
 // bh = bFamilyOnLot. Visiting: bl = ConfirmLeaving() and continue at 0x459a39, the common tail after the dialogs
 // (g_bQuitInProgress = 0, the SimLog prompt, then quit if bl); no string was constructed, so the EH state is still
 // -1, as the tail expects. Otherwise the two original instructions, then back to 0x45991f (`test al,al`).
+#if GAME_CC
+// 2003: the same test is `mov ecx,[esi+0x68]; call CPState::IsSaveDisabled` (8 bytes; esi = the cITSApp
+// part of cSimsApp, +0x68 from it is m_pCPState) and bDoQuit is the stack byte [ebp-0xd], not bl (ebx is 0 here, the
+// tail compares with bl). Visiting: [ebp-0xd] = ConfirmLeaving() and continue at the tail after the dialogs'
+// string destructor (g_bQuitInProgress = 0, the SimLog prompt, then quit if [ebp-0xd]); the EH state is still -1.
+// Otherwise the two original instructions, then back to the `test al,al`.
+__declspec(naked) static void S_QuitSaveDisabled()
+{
+    __asm
+    {
+        call Q_Active
+        test al, al
+        jnz visiting
+        mov ecx, [esi + 0x68]
+        call dword ptr [s_vaIsSaveDisabled]
+        jmp dword ptr [s_vaQuitAfterTest]
+    visiting:
+        call Q_ConfirmLeaving
+        mov byte ptr [ebp - 0xd], al
+        jmp dword ptr [s_vaQuitTail]
+    }
+}
+#else
 __declspec(naked) static void S_QuitSaveDisabled()
 {
     __asm
@@ -357,6 +419,7 @@ __declspec(naked) static void S_QuitSaveDisabled()
         jmp dword ptr [s_vaQuitTail]
     }
 }
+#endif
 
 // -lang:<name or 1..20> overrides the registry and Steam languages (e.g. -lang:polish, -lang:pl, -lang:16). Applied
 // at the ReadSimsRegKey("SIMS_SKU") call at 0x458175: after the language switches, reached on every path.
@@ -416,6 +479,23 @@ static int __cdecl C_LotPopupVisitLine(char *pszOut, const char *pszFormat, cons
 // 4 NOPs. The stub pushes the same first argument under its return address and tail-jumps to the cdecl
 // C_LotPopupVisitLine, which returns to the NOPs; the caller pops the four arguments as before (add esp,0x1c).
 // edi = this (the code around reads m_ppszPopupText through it). Clobbers eax/ecx (wsprintfA did too).
+#if GAME_CC
+// 2003: the same three instructions are `lea eax,[ebp-0xa20]; push eax; call edi` (9 bytes, after the other
+// three arguments were pushed), esi = this; the caller pops the four arguments and the two of the following strcpy
+// together (add esp,0x18).
+__declspec(naked) static void S_LotPopupVisitLine()
+{
+    __asm
+    {
+        pop ecx
+        lea eax, [ebp - 0xa20]
+        push eax
+        push ecx
+        mov s_pLotPopup, esi
+        jmp C_LotPopupVisitLine
+    }
+}
+#else
 __declspec(naked) static void S_LotPopupVisitLine()
 {
     __asm
@@ -428,6 +508,7 @@ __declspec(naked) static void S_LotPopupVisitLine()
         jmp C_LotPopupVisitLine
     }
 }
+#endif
 
 // cWinNeighborhoodUL: the visit filter reuses the lodging filter slot (slot 6), which can never be enabled in this
 // window (lodging lots exist only on Vacation Island, which has its own window), so no other code needs changes.
@@ -561,14 +642,22 @@ static const Hook s_Hooks[] = {
     WRAP(CPState__SetMode,                          W_SetMode, o_SetMode),
     WRAP(CPState__UpdateCPStateFromWorld,           W_UpdateCPStateFromWorld, o_UpdateCPStateFromWorld),
     WRAP(ObjTestSim__AppendInteractionsForAuto,     W_AppendInteractionsForAuto, o_AppendInteractionsForAuto),
+#if GAME_CC
+    CALL(AIFA_Residential1,                         C_AifaResidential1),
+    CALL_STUB(AIFA_Residential2,                    S_AifaResidential2),
+#else
     CALL(AIFA_Zoning1,                              C_AifaZoning1),
     CALL_STUB(AIFA_Zoning2,                         S_AifaZoning2),
+#endif
     WRAP(ObjTestSim__TestInteraction,               W_TestInteraction, o_TestInteraction),
     CALL(TI_Residential,                            C_TiResidential),
     WRAP(ObjectModule__AdvanceSelectedPerson,       W_AdvanceSelectedPerson, o_AdvanceSelectedPerson),
     WRAP(ObjectModule__AddToKillQueue,              W_AddToKillQueue, o_AddToKillQueue),
     WRAP(ObjectModule__PostSim,                     W_PostSim, o_PostSim),
     CALL(PostSim_Advance,                           C_PostSimNoAdvance),
+#if GAME_CC
+    CALL(PostSim_Advance2,                          C_PostSimNoAdvance),
+#endif
     CALL(PostSim_NbhdZone,                          C_ZoningVisitableAsCommunity),
     WRAP(cXObject__TryGenericSimCall,               W_TryGenericSimCall, o_TryGenericSimCall),
     WRAP(PersonFinder__CountPeopleInHouse,          W_CountPeopleInHouse, o_CountPeopleInHouse),
@@ -610,6 +699,9 @@ extern "C" __declspec(dllexport) int __cdecl SimsMod_Init(const SimsLoaderApi *a
     s_api = api;
     ga::g_exeBase = api->exeBase;
     s_vaGetZoningType = Va(A::Neighborhood__GetZoningType);
+#if GAME_CC
+    s_vaIsCurrentLotResidential = Va(A::cSimulator__IsCurrentLotResidential);
+#endif
     s_vaAifaAppend = Va(A::AIFA_Append);
     s_vaAifaSkip = Va(A::AIFA_Skip);
     s_vaIsSaveDisabled = Va(A::CPState__IsSaveDisabled);

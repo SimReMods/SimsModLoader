@@ -20,3 +20,11 @@ if not exist build\ea mkdir build\ea
 cl /nologo /Brepro /c /MT /GS /EHsc /O2 /Oy- /std:c++17 /W3 /wd4996 /DGAME_EA=1 /Fobuild\ea\ visitlots.cpp LotVisit.cpp LotVisitText.cpp || exit /b 1
 link /nologo /Brepro /DLL /MACHINE:X86 /OPT:REF /OPT:ICF /OUT:build\ea\visit_lots_ea.dll build\ea\visitlots.obj build\ea\LotVisit.obj build\ea\LotVisitText.obj build\version.res kernel32.lib user32.lib || exit /b 1
 echo built build\ea\visit_lots_ea.dll (version %V%)
+if not exist game_addr_cc.h (
+    echo skipped build\cc\visit_lots_cc.dll: game_addr_cc.h not present
+    exit /b 0
+)
+if not exist build\cc mkdir build\cc
+cl /nologo /Brepro /c /MT /GS /EHsc /O2 /Oy- /std:c++17 /W3 /wd4996 /DGAME_CC=1 /Fobuild\cc\ visitlots.cpp LotVisit.cpp LotVisitText.cpp || exit /b 1
+link /nologo /Brepro /DLL /MACHINE:X86 /OPT:REF /OPT:ICF /OUT:build\cc\visit_lots_cc.dll build\cc\visitlots.obj build\cc\LotVisit.obj build\cc\LotVisitText.obj build\version.res kernel32.lib user32.lib || exit /b 1
+echo built build\cc\visit_lots_cc.dll (version %V%)

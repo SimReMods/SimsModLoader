@@ -4,15 +4,25 @@
 #pragma once
 #include <stddef.h>
 
+// GAME_CC=1 builds for the Complete Collection (2003, VC6 + SGI STL): game_addr_cc.h, and GA_O(legacy, cc) picks the
+// 2003 offset of a field where the class layout differs (VC6 string 12 bytes, SGI map, members only Legacy has).
+#ifndef GAME_CC
+#define GAME_CC 0
+#endif
 // GAME_EA=1: the Legacy Collection from the EA app - the Steam code relinked at other addresses (game_addr_ea.h is
 // generated from game_addr.h by tools/port_addrs.py); class layouts are the same.
 #ifndef GAME_EA
 #define GAME_EA 0
 #endif
-#if GAME_EA
+#if GAME_CC
+#define GA_ADDR_FILE "game_addr_cc.h"
+#define GA_O(legacy, cc) (cc)
+#elif GAME_EA
 #define GA_ADDR_FILE "game_addr_ea.h"
+#define GA_O(legacy, cc) (legacy)
 #else
 #define GA_ADDR_FILE "game_addr.h"
+#define GA_O(legacy, cc) (legacy)
 #endif
 
 #pragma warning(push)
@@ -69,7 +79,7 @@ namespace ga
         return ((R(__thiscall *)(const void *, T...))(*(void ***)self)[slot])(self, a...);
     }
 
-    template <class T> struct Vec                      // std::vector<T> as laid out in the exe (MSVC: 3 pointers)
+    template <class T> struct Vec                      // std::vector<T> as laid out in the exe (MSVC and SGI: 3 pointers)
     {
         T *_Myfirst, *_Mylast, *_Myend;
         size_t size() const { return (size_t)(_Mylast - _Myfirst); }
@@ -186,10 +196,10 @@ namespace ga
         }
     };
 
-    class cTSString                                     // std::string-derived, 24 bytes; built and freed by the exe
+    class cTSString                                     // std::string-derived (24 bytes; 2003: 12); built and freed by the exe
     {
     public:
-        union { GA_SIZE(24) };
+        union { GA_SIZE(GA_O(24, 12)) };
         explicit cTSString(const char *psz) { ThisCall<void>(A::cTSString__cTSString, this, psz); }
         ~cTSString() { ThisCall<void>(A::cTSString___cTSString, this); }
     };
@@ -202,7 +212,8 @@ namespace ga
         {
             GA_F0(int, m_nKind) GA_F(0x04, cXPerson *, m_pFrom) GA_F(0x08, cXObject *, m_pTargetObj)
             GA_F(0x0C, cXObject *, m_pOrigTarget) GA_F(0x10, int, m_nActionID) GA_A(0x14, short, m_nStackVar, 4)
-            GA_F(0x1C, int, m_nPriority) GA_F(0x20, short, m_nTreeID) GA_F(0x4C, unsigned int, m_nFlags) GA_SIZE(80)
+            GA_F(0x1C, int, m_nPriority) GA_F(0x20, short, m_nTreeID) GA_F(GA_O(0x4C, 0x40), unsigned int, m_nFlags)
+            GA_SIZE(GA_O(80, 0x44))
         };
         TreeTableEntry *GetEntry() const { return ThisCall<TreeTableEntry *>(A::Interaction__GetEntry, this); }
     };
@@ -221,7 +232,7 @@ namespace ga
 
     struct InteractionQueue
     {
-        union { GA_A0(InteractionData, m_Item, 8) GA_F(0x280, int, m_nHead) GA_F(0x284, int, m_nTail) };
+        union { GA_A0(InteractionData, m_Item, 8) GA_F(GA_O(0x280, 0x220), int, m_nHead) GA_F(GA_O(0x284, 0x224), int, m_nTail) };
         unsigned int Count() const { return (unsigned int)(m_nTail - m_nHead); }
         InteractionData &At(unsigned int i) { return m_Item[(m_nHead + i) & 7]; }
     };
@@ -245,6 +256,7 @@ namespace ga
     class cXObject
     {
     public:
+        enum { kSize = GA_O(0x190, 0x18C) };
         union
         {
             GA_F(0x008, TreeStack, m_Frames) GA_F(0x02C, short *, m_pAttributes) GA_F(0x030, int, m_nNumAttributes)
@@ -252,8 +264,8 @@ namespace ga
             GA_F(0x05A, short, m_nObjectFlags) GA_F(0x07C, short, m_nLockoutCount) GA_F(0x08E, short, m_bHidden)
             GA_F(0x0AE, short, m_nHideInteraction) GA_F(0x0C0, short, m_nCategory)
             GA_F(0x0DC, ObjectModule *, m_pModule) GA_F(0x0F0, short, m_nObjectId) GA_F(0x0F4, int, m_nPosY16)
-            GA_F(0x0F8, int, m_nPosX16) GA_F(0x110, int, m_nLevel) GA_F(0x11C, OBJD *, m_pObjdData)
-            GA_F(0x120, ObjSelector *, m_pSelector) GA_SIZE(0x190)
+            GA_F(0x0F8, int, m_nPosX16) GA_F(0x110, int, m_nLevel) GA_F(GA_O(0x11C, 0x118), OBJD *, m_pObjdData)
+            GA_F(GA_O(0x120, 0x11C), ObjSelector *, m_pSelector) GA_SIZE(kSize)
         };
         bool IsInWorld() { return ThisCall<bool>(A::cXObject__IsInWorld, this); }
         bool FindGoodLocation(FindGoodLocationParams *pParams, FTilePt *pOut)
@@ -266,21 +278,23 @@ namespace ga
         }
     };
 
-#define GA_FP(off, type, name) GA_F((off) - 0x190, type, name)          // cXPerson field at absolute offset `off`
-#define GA_AP(off, type, name, n) GA_A((off) - 0x190, type, name, n)
-#define GA_SIZEP(n) GA_SIZE((n) - 0x190)                                 // cXPerson total size `n`
+#define GA_FP(off, type, name) GA_F((off) - cXObject::kSize, type, name)   // cXPerson field at absolute offset `off`
+#define GA_AP(off, type, name, n) GA_A((off) - cXObject::kSize, type, name, n)
+#define GA_SIZEP(n) GA_SIZE((n) - cXObject::kSize)                          // cXPerson total size `n`
     class cXPerson : public cXObject
     {
     public:
         enum { kEnergy = 5, kComfort = 6, kHunger = 7, kHygiene = 8, kBladder = 9, kSocial = 14, kFun = 15 };
         union
         {
-            GA_AP(0x590, short, m_PersonData, 256) GA_FP(0x5CE, short, m_nNeighborId)
-            GA_FP(0x5D0, short, m_nPersonType) GA_FP(0x5D2, short, m_nCurrentPriority)
-            GA_FP(0x5D4, short, m_nGreetStatus) GA_FP(0x604, short, m_nAge) GA_FP(0x60A, short, m_nFamilyNumber)
-            GA_FP(0x612, short, m_nGender) GA_FP(0x618, short, m_bIsGhost) GA_FP(0x63E, short, m_bAtWorkOrSchool)
-            GA_FP(0x790, Motives, m_Motives) GA_FP(0x824, InteractionQueue, m_ActionQueue)
-            GA_FP(0xAAC, InteractionData, m_Current) GA_SIZEP(0xC90)
+            // 2003: m_PersonData[] starts 4 bytes lower (same indices); the queue and m_Current hold 0x44-byte Interactions
+            GA_AP(GA_O(0x590, 0x58C), short, m_PersonData, 256) GA_FP(GA_O(0x5CE, 0x5CA), short, m_nNeighborId)
+            GA_FP(GA_O(0x5D0, 0x5CC), short, m_nPersonType) GA_FP(GA_O(0x5D2, 0x5CE), short, m_nCurrentPriority)
+            GA_FP(GA_O(0x5D4, 0x5D0), short, m_nGreetStatus) GA_FP(GA_O(0x604, 0x600), short, m_nAge)
+            GA_FP(GA_O(0x60A, 0x606), short, m_nFamilyNumber) GA_FP(GA_O(0x612, 0x60E), short, m_nGender)
+            GA_FP(GA_O(0x618, 0x614), short, m_bIsGhost) GA_FP(GA_O(0x63E, 0x63A), short, m_bAtWorkOrSchool)
+            GA_FP(GA_O(0x790, 0x78C), Motives, m_Motives) GA_FP(GA_O(0x824, 0x820), InteractionQueue, m_ActionQueue)
+            GA_FP(GA_O(0xAAC, 0xA48), InteractionData, m_Current) GA_SIZEP(GA_O(0xC90, 0xC14))
         };
         bool IsChild() const { return m_nAge && m_nAge < 18; }          // header inline in the exe too
         short &Hidden() { return m_bHidden; }
@@ -313,7 +327,7 @@ namespace ga
     class ObjectModule
     {
     public:
-        union { GA_F(0x18, Vec<cXObject *>, m_Objects) GA_F(0x80, Vec<cXPerson *>, m_Persons) };
+        union { GA_F(0x18, Vec<cXObject *>, m_Objects) GA_F(GA_O(0x80, 0x84), Vec<cXPerson *>, m_Persons) };
         cXObject *GetObject(int nId)                    // header inline in the exe (0x4558f0 is an out-of-line copy)
         {
             return nId > 0 && (unsigned)nId < m_Objects.size() + 1 ? m_Objects[nId - 1] : 0;
@@ -400,7 +414,7 @@ namespace ga
         union
         {
             GA_F0(House *, m_pGame) GA_F(0x1C, cSimulator *, m_pSimulator) GA_F(0x24, Neighborhood *, m_pNeighborhood)
-            GA_F(0x48, int, m_nSaveVersion)
+            GA_F(GA_O(0x48, 0x44), int, m_nSaveVersion) GA_F(GA_O(0x68, 0x64), signed char, m_nCurrentLanguage)
         };
     };
 
@@ -422,7 +436,7 @@ namespace ga
     class cTSWinMgrW95
     {
     public:
-        union { GA_F(0x178, cTSCursorManager *, m_pCursorMgr) };
+        union { GA_F(GA_O(0x178, 0x170), cTSCursorManager *, m_pCursorMgr) };
         void SetGlobalCursor(cTSCursor *p, bool b) { ThisCall<void>(A::cTSWinMgrW95__SetGlobalCursor, this, p, b); }
     };
 
@@ -437,7 +451,7 @@ namespace ga
     public:
         enum Mode { kBuild = 0, kBuy = 1, kLive = 2 };
         enum { kDirtyBuyBuild = 0x1000000 };
-        union { GA_F(0x0C, int, m_dwFlags) GA_F(0x7C, bool, m_bBuyAndBuildDisabled) };
+        union { GA_F(0x0C, int, m_dwFlags) GA_F(GA_O(0x7C, 0x64), bool, m_bBuyAndBuildDisabled) };
         void SetDirty(int nBits) { ThisCall<void>(A::CPState__SetDirty, this, nBits); }
         void DisableSave(bool b) { ThisCall<void>(A::CPState__DisableSave, this, b); }
         void HideButtonsForLocation(bool b) { ThisCall<void>(A::CPState__HideButtonsForLocation, this, b); }
@@ -448,9 +462,10 @@ namespace ga
     public:
         union
         {
-            GA_F(0x088, cTSWin *, m_pRootWin) GA_F(0x08C, cDDDSimsView *, m_pLotView) GA_F(0x0C4, CPState *, m_pCPState)
-            GA_F(0x161, char, m_bReqNeighborhood) GA_F(0x196, short, m_nInputCode) GA_F(0x198, int, m_nInputParam)
-            GA_F(0x19C, short, m_nMoveInFamilyNumber)
+            GA_F(GA_O(0x088, 0x080), cTSWin *, m_pRootWin) GA_F(GA_O(0x08C, 0x084), cDDDSimsView *, m_pLotView)
+            GA_F(GA_O(0x0C4, 0x0B0), CPState *, m_pCPState) GA_F(GA_O(0x161, 0x0F9), char, m_bReqNeighborhood)
+            GA_F(GA_O(0x196, 0x132), short, m_nInputCode) GA_F(GA_O(0x198, 0x134), int, m_nInputParam)
+            GA_F(GA_O(0x19C, 0x138), short, m_nMoveInFamilyNumber)
         };
         int MessageDialog(const char *pszText, const char *pszTitle, unsigned long nSet, bool b)
         {
@@ -461,21 +476,60 @@ namespace ga
         bool SaveGame() { return ThisCall<bool>(A::cSimsApp__SaveGame, this); }
     };
 
-    struct HouseInfo                                    // a lot's header data (LotHouseInfo)
+    struct HouseInfo                                    // a lot's header data (LotHouseInfo; 2003: thumbnails first)
     {
         union
         {
-            GA_F(0x10, int, m_nFilterMask) GA_F(0x40, int, m_nHouseId) GA_F(0x80, int, m_nLotX) GA_F(0x84, int, m_nLotY)
-            GA_SIZE(136)
+            GA_F(GA_O(0x10, 0x20), int, m_nFilterMask) GA_F(GA_O(0x40, 0x44), int, m_nHouseId)
+            GA_F(GA_O(0x80, 0x74), int, m_nLotX) GA_F(GA_O(0x84, 0x78), int, m_nLotY) GA_SIZE(GA_O(136, 0x7C))
         };
     };
 
     class cWinLotBtn
     {
     public:
-        union { GA_F(0x1E0, HouseInfo, m_HouseInfo) };
+        union { GA_F(GA_O(0x1E0, 0x194), HouseInfo, m_HouseInfo) };
     };
 
+#if GAME_CC
+    // std::map<int, cWinLotBtn *> as laid out in the 2003 exe (SGI _Rb_tree: header node + count; node: colour, parent,
+    // left, right, key, value; leaves are 0, the header's left is the leftmost node - the walk
+    // cWinNeighborhoodUL::AnyLotMatchesFilter does)
+    struct LotMapNode
+    {
+        int _M_color;
+        LotMapNode *_M_parent, *_M_left, *_M_right;
+        int first;
+        cWinLotBtn *second;
+    };
+    struct LotMap
+    {
+        LotMapNode *_M_header;
+        size_t _M_node_count;
+        template <class F> void ForEach(F f) const      // in-order walk (SGI _Rb_tree_base_iterator::_M_increment), stops when f returns true
+        {
+            for (LotMapNode *n = _M_header->_M_left; n != _M_header;)
+            {
+                if (f(n->second))
+                    return;
+                if (n->_M_right)
+                {
+                    n = n->_M_right;
+                    while (n->_M_left)
+                        n = n->_M_left;
+                }
+                else
+                {
+                    LotMapNode *p = n->_M_parent;
+                    while (n == p->_M_right)
+                        n = p, p = p->_M_parent;
+                    if (n->_M_right != p)
+                        n = p;
+                }
+            }
+        }
+    };
+#else
     // std::map<int, cWinLotBtn *> as laid out in the exe (MSVC _Tree: head node + size; node: left, parent, right,
     // colour, isnil, key, value - the walk cWinNeighborhoodUL::AnyLotMatchesFilter 0x4a6720 does)
     struct LotMapNode
@@ -511,24 +565,29 @@ namespace ga
             }
         }
     };
+#endif
 
     class cWinNeighborhoodUL
     {
     public:
-        union { GA_A(0x148, cTSWin *, m_pFilterBtns, 7) GA_F(0x1A4, LotMap, m_LotBtnTree) GA_F(0x1EC, int, m_nFilterMask) };
+        union
+        {
+            GA_A(GA_O(0x148, 0xE4), cTSWin *, m_pFilterBtns, 7) GA_F(GA_O(0x1A4, 0x148), LotMap, m_LotBtnTree)
+            GA_F(GA_O(0x1EC, 0x194), int, m_nFilterMask)
+        };
         void DrawFilterAt(int x, int y) { ThisCall<void>(A::cWinNeighborhoodUL__DrawFilterAt, this, x, y); }
     };
 
     class cWinLotPopup
     {
     public:
-        union { GA_F(0x130, HouseInfo *, m_pHouseInfo) };
+        union { GA_F(GA_O(0x130, 0xE0), HouseInfo *, m_pHouseInfo) };
     };
 
     class cWinOptions
     {
     public:
-        union { GA_A(0x134, cTSWin *, m_apCtrls, 59) };
+        union { GA_A(GA_O(0x134, 0xE0), cTSWin *, m_apCtrls, GA_O(59, 42)) };
     };
 
     class ObjTestSim
@@ -542,8 +601,14 @@ namespace ga
     inline cSimsApp *SimsApp() { return Global<cSimsApp *>(A::g_pSimsApp); }
     inline cTSWinMgrW95 *WinMgr() { return Global<cTSWinMgrW95 *>(A::g_pWinMgr); }
     inline int VisitorControl() { return Global<int>(A::g_bVisitorControl); }
+#if GAME_CC
+    // inlined everywhere in the 2003 exe (as Legacy's 0x455820 / 0x45d580 do: read / store Globs::m_nCurrentLanguage)
+    inline char GetLanguage() { return Settings()->m_nCurrentLanguage; }
+    inline void SetLanguage(int nLang) { Settings()->m_nCurrentLanguage = (signed char)nLang; }
+#else
     inline char GetLanguage() { return Call<char>(A::GetLanguage); }
     inline void SetLanguage(int nLang) { Call<void>(A::SetLanguage, nLang); }
+#endif
 
     namespace PersonFinder
     {

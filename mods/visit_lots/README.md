@@ -38,7 +38,8 @@ Open "x86 Native Tools Command Prompt for VS 2022" and run
 
     build.bat
 
-Output: `build\visit_lots_steam.dll` (Steam) and `build\ea\visit_lots_ea.dll` (EA app).
+Output: `build\visit_lots_steam.dll` (Steam), `build\ea\visit_lots_ea.dll` (EA app) and `build\cc\visit_lots_cc.dll`
+(The Sims Complete Collection, 2003; built when `game_addr_cc.h` is present).
 
 ## Install
 
