@@ -1,6 +1,9 @@
-// log.cpp - mod.log next to the exe. Opened once (append), every line flushed: the process may die at any point.
+// log.cpp - mod.log next to the exe (or in Saved Games\Electronic Arts\The Sims 25 when that folder is not writable).
+// Opened once (append), every line flushed: the process may die at any point.
 #include <windows.h>
+#include <shlobj.h>
 #include <stdio.h>
+#include <string.h>
 #include <stdarg.h>
 #include "log.h"
 
@@ -8,13 +11,42 @@ static HANDLE s_hLog = INVALID_HANDLE_VALUE;
 static CRITICAL_SECTION s_cs;
 static DWORD s_t0;
 
+static HANDLE OpenLog(const char *pszDir, char *path, unsigned len)
+{
+    _snprintf_s(path, len, _TRUNCATE, "%s\\mod.log", pszDir);
+    return CreateFileA(path, FILE_APPEND_DATA, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, 0, OPEN_ALWAYS, FILE_ATTRIBUTE_NORMAL, 0);
+}
+
 void Log_Init(const char *pszDir)
 {
-    char path[MAX_PATH];
-    _snprintf_s(path, sizeof path, _TRUNCATE, "%s\\mod.log", pszDir);
     InitializeCriticalSection(&s_cs);
-    s_hLog = CreateFileA(path, FILE_APPEND_DATA, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, 0, OPEN_ALWAYS, FILE_ATTRIBUTE_NORMAL, 0);
     s_t0 = GetTickCount();
+    char path[MAX_PATH];
+    s_hLog = OpenLog(pszDir, path, sizeof path);
+    if (s_hLog != INVALID_HANDLE_VALUE)
+        return;
+    // The game folder is read-only for the game when it lives in Program Files (EA app install, not run as admin):
+    // fall back to the game's save folder, then to %TEMP%.
+    DWORD err = GetLastError();
+    char dir[MAX_PATH];
+    PWSTR pszSaved = 0;
+    if (SUCCEEDED(SHGetKnownFolderPath(FOLDERID_SavedGames, KF_FLAG_CREATE, 0, &pszSaved)))
+    {
+        _snprintf_s(dir, sizeof dir, _TRUNCATE, "%ls\\Electronic Arts", pszSaved);
+        CreateDirectoryA(dir, 0);
+        _snprintf_s(dir, sizeof dir, _TRUNCATE, "%ls\\Electronic Arts\\The Sims 25", pszSaved);
+        CreateDirectoryA(dir, 0);
+        s_hLog = OpenLog(dir, path, sizeof path);
+    }
+    CoTaskMemFree(pszSaved);
+    if (s_hLog == INVALID_HANDLE_VALUE && GetTempPathA(sizeof dir, dir))
+    {
+        size_t n = strlen(dir);
+        if (n && dir[n - 1] == '\\') dir[n - 1] = 0;
+        s_hLog = OpenLog(dir, path, sizeof path);
+    }
+    if (s_hLog != INVALID_HANDLE_VALUE)
+        Log("(game folder %s is not writable, error %lu: logging to %s)", pszDir, err, path);
 }
 
 static void LogVa(const char *fmt, va_list ap)

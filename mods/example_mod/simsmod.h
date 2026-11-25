@@ -40,6 +40,7 @@ struct SimsLoaderApi
 // game builds (bits, also used by SimsMod_Games)
 #define SIMSMOD_GAME_LEGACY     0x1u    // The Sims Legacy Collection 1.10.7.0 (Steam)
 #define SIMSMOD_GAME_COMPLETE   0x2u    // The Sims Complete Collection (2003)
+#define SIMSMOD_GAME_LEGACY_EA  0x4u    // The Sims Legacy Collection 1.10.7 (EA app): different exe layout from Steam
 
 // The game the mod runs in (SIMSMOD_GAME_*). Loaders older than gameBuild only ever ran the Legacy Collection.
 inline unsigned SimsMod_GetGame(const SimsLoaderApi *api)

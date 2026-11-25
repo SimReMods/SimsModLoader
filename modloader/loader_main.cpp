@@ -117,7 +117,8 @@ static unsigned long long TextHash()
     // mask: .text bytes that belong to a relocated dword (from the image's .reloc section)
     const IMAGE_DOS_HEADER *dos = (const IMAGE_DOS_HEADER *)(UINT_PTR)orig::base;
     const IMAGE_NT_HEADERS *nt = (const IMAGE_NT_HEADERS *)((const char *)dos + dos->e_lfanew);
-    const IMAGE_DATA_DIRECTORY &rd = nt->OptionalHeader.DataDirectory[IMAGE_DIRECTORY_ENTRY_BASERELOC];
+    IMAGE_DATA_DIRECTORY rd = nt->OptionalHeader.DataDirectory[IMAGE_DIRECTORY_ENTRY_BASERELOC];
+    if (s_pBuild->relocRva) { rd.VirtualAddress = s_pBuild->relocRva; rd.Size = s_pBuild->relocSize; }
     unsigned textRva = (unsigned)(s_pText - (unsigned char *)(UINT_PTR)orig::base);
     unsigned char *mask = (unsigned char *)VirtualAlloc(0, s_nText, MEM_COMMIT, PAGE_READWRITE);
     if (!mask) return 0;
