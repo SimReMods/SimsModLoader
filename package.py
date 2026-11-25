@@ -15,9 +15,9 @@ ROOT = os.path.dirname(os.path.abspath(__file__))
 FIXED_TIME = (2000, 1, 1, 0, 0, 0)
 
 PACKAGES = {
-    'visitlots': ('visit_lots', 'visit_lots.dll', 'README-MOD.txt'),
-    'multistory': ('multistory', 'multistory.dll', 'README-MULTISTORY.txt'),
-    'eyedropper': ('eyedropper', 'eyedropper.dll', 'README-EYEDROPPER.txt'),
+    'visitlots': ('visit_lots', 'visit_lots_steam.dll', 'README-MOD.txt'),
+    'multistory': ('multistory', 'multistory_steam.dll', 'README-MULTISTORY.txt'),
+    'eyedropper': ('eyedropper', 'eyedropper_steam.dll', 'README-EYEDROPPER.txt'),
 }
 
 

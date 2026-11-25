@@ -1,4 +1,4 @@
-// eyedropper.cpp - mods\eyedropper.dll: the build / buy mode eyedropper (see README.md).
+// eyedropper.cpp - mods\eyedropper_steam.dll / _ea.dll / _cc.dll: the build / buy mode eyedropper (see README.md).
 #include <windows.h>
 #include <stdio.h>
 #include <stdlib.h>

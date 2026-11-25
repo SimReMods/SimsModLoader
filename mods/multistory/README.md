@@ -4,7 +4,7 @@ Lots get two more stories (3 and 4) on top of the original two. Build, buy and l
 
 ## Install
 
-Needs the SimsModLoader `winmm.dll` in the game folder (Steam Legacy Collection 1.10.7.0). Copy `multistory.dll` into the game's `mods` folder and `data\UIGraphics` into the game's `UIGraphics` folder. It can be installed together with visit_lots.
+Needs the SimsModLoader `winmm.dll` in the game folder (Steam Legacy Collection 1.10.7.0). Copy `multistory_steam.dll` into the game's `mods` folder and `data\UIGraphics` into the game's `UIGraphics` folder. It can be installed together with visit_lots.
 
 **BACK UP YOUR SAVES.** A lot with anything on stories 3-4 NEEDS THE MOD to load. Otherwise the base game WILL CRASH!!
 
@@ -15,7 +15,7 @@ instruction that indexes a per-story array by a variable story is redirected to 
 
 ## Build
 
-From the "x86 Native Tools Command Prompt for VS 2022": `build.bat` -> `build\multistory.dll`.
+From the "x86 Native Tools Command Prompt for VS 2022": `build.bat` -> `build\multistory_steam.dll`.
 
 | file | |
 |---|---|

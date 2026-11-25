@@ -8,7 +8,7 @@ wall tool with that wall type). Esc puts the previous tool back. The mod changes
 
 Install: extract this zip into the game folder (the one with Sims.exe), keeping the folder structure:
   winmm.dll                                 the mod loader (a proxy of the system winmm.dll)
-  mods\eyedropper.dll                       the mod
+  mods\eyedropper_steam.dll                 the mod
   UIGraphics\Res_Eyedropper.RT              registers the button art (UIGraphics.far is untouched)
   UIGraphics\Res_Eyedropper.h               its resource id
   UIGraphics\Eyedropper\EyedropperBtn.bmp   the build panel button
@@ -16,7 +16,8 @@ Install: extract this zip into the game folder (the one with Sims.exe), keeping 
 
 Uninstall: delete these files from the game folder:
   winmm.dll                (keep it if another mod in the mods folder uses it)
-  mods\eyedropper.dll
+  mods\eyedropper_steam.dll
+  mods\eyedropper.dll  (older versions of the mod)
   UIGraphics\Res_Eyedropper.RT
   UIGraphics\Res_Eyedropper.h
   UIGraphics\Eyedropper\EyedropperBtn.bmp

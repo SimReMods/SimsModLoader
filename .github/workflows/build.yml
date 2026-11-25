@@ -80,7 +80,7 @@ jobs:
         shell: pwsh
         run: |
           python package.py
-          Get-FileHash dist\*.zip, modloader\build\winmm.dll, mods\visit_lots\build\visit_lots.dll, mods\multistory\build\multistory.dll, mods\eyedropper\build\eyedropper.dll -Algorithm SHA256 |
+          Get-FileHash dist\*.zip, modloader\build\winmm.dll, mods\visit_lots\build\visit_lots_steam.dll, mods\multistory\build\multistory_steam.dll, mods\eyedropper\build\eyedropper_steam.dll -Algorithm SHA256 |
             Format-Table Hash, Path -AutoSize | Out-String -Width 300
 
       - uses: actions/upload-artifact@v4

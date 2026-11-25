@@ -1,4 +1,4 @@
-// visitlots.cpp - mods\visit_lots.dll: visiting another family's home lot (LotVisit.h), as a patch mod.
+// visitlots.cpp - mods\visit_lots_steam.dll / visit_lots_ea.dll: visiting another family's home lot (LotVisit.h), as a patch mod.
 //
 // Every original function keeps running as the exe's own code. The mod changes it in one of three ways:
 //   wrapper  - the function's entry is detoured to a W_* function here, which applies the feature's rule and calls

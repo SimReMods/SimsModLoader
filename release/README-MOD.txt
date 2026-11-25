@@ -3,7 +3,7 @@ archives is changed on disk.
 
 Install: extract this zip into the game folder (the one with Sims.exe), keeping the folder structure:
   winmm.dll                          the mod loader (a proxy of the system winmm.dll)
-  mods\visit_lots.dll                the mod
+  mods\visit_lots_steam.dll          the mod
   GameData\Global\PersonGlobals.iff  modified globals (a loose file; it overrides the copy inside Global.far)
   GameData\Global\DogGlobals.iff and CatGlobals.iff  modified pet globals (loose; same mechanism)
   GameData\Objects\People\PizzaDude.iff and GameData\Objects\SocialInteractions.iff  the pizza delivery (loose)
@@ -15,7 +15,8 @@ mod was built for, the loader shows a message and the game starts without the mo
 
 Uninstall: delete these files from the game folder:
   winmm.dll
-  mods\visit_lots.dll
+  mods\visit_lots_steam.dll
+  mods\visit_lots.dll  (older versions of the mod)
   GameData\Global\PersonGlobals.iff
   GameData\Global\DogGlobals.iff
   GameData\Global\CatGlobals.iff

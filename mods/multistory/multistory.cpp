@@ -1,4 +1,4 @@
-// multistory.cpp - mods\multistory.dll: lots with 4 stories (SimsModLoader mod).
+// multistory.cpp - mods\multistory_steam.dll: lots with 4 stories (SimsModLoader mod).
 // The game is reached through ms_game_api.h (generated). Stories 3-4 live in one side block per class (g_blk*):
 // msstubs.asm redirects the per-story array accesses there, ms_patches.h raises the story limits, ms_pick.asm picks
 // the clicked story; the hooks below do the rest.

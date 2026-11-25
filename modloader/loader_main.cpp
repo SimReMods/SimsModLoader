@@ -181,6 +181,23 @@ void Loader_OnAttach(void *hThisDll)
     LogV("at attach: .text %p..%p, OEP bytes %s (%s)", s_pText, s_pText + s_nText, oepOk ? "ALREADY DECRYPTED" : "still packed", oepOk ? "-" : why);
 }
 
+// Mod builds are named <mod>_steam / <mod>_ea / <mod>_cc.dll; older releases shipped <mod>.dll for Steam. The stem is the
+// file name without ".dll" and that suffix.
+static void ModStem(const char *pszFile, char *pszStem, unsigned len, bool *pbSuffixed)
+{
+    lstrcpynA(pszStem, pszFile, len);
+    char *dot = strrchr(pszStem, '.');
+    if (dot) *dot = 0;
+    *pbSuffixed = false;
+    static const char *const s_Suffixes[] = { "_steam", "_ea", "_cc" };
+    size_t n = strlen(pszStem);
+    for (const char *s : s_Suffixes)
+    {
+        size_t k = strlen(s);
+        if (n > k && !_stricmp(pszStem + n - k, s)) { pszStem[n - k] = 0; *pbSuffixed = true; break; }
+    }
+}
+
 static void LoadMods()
 {
     s_api.size = sizeof s_api; s_api.version = SIMSMOD_API_VERSION;
@@ -200,8 +217,40 @@ static void LoadMods()
     for (int i = 1; i < n; ++i)
         for (int j = i; j > 0 && _stricmp(names[j - 1], names[j]) > 0; --j)
         { char t[MAX_PATH]; lstrcpynA(t, names[j], MAX_PATH); lstrcpynA(names[j], names[j - 1], MAX_PATH); lstrcpynA(names[j - 1], t, MAX_PATH); }
+    // <mod>.dll next to <mod>_steam.dll / _ea.dll / _cc.dll is an old copy left by an upgrade. Loaded first (it sorts
+    // first), it would win and the new build would switch itself off on its signature check. Skip it and say so.
+    bool bSkip[32] = {};
+    char msg[1024] = "";
+    int nMsg = 0;
     for (int i = 0; i < n; ++i)
     {
+        char stem[MAX_PATH];
+        bool bSuffixed;
+        ModStem(names[i], stem, MAX_PATH, &bSuffixed);
+        if (bSuffixed) continue;
+        for (int j = 0; j < n && !bSkip[i]; ++j)
+        {
+            char stem2[MAX_PATH];
+            bool bSuffixed2;
+            ModStem(names[j], stem2, MAX_PATH, &bSuffixed2);
+            if (!bSuffixed2 || _stricmp(stem, stem2)) continue;
+            bSkip[i] = true;
+            Log("mod %s: an older copy of %s, not loaded - delete it from the mods folder", names[i], names[j]);
+            if (nMsg >= 0 && (unsigned)nMsg < sizeof msg)
+                nMsg += _snprintf_s(msg + nMsg, sizeof msg - nMsg, _TRUNCATE, "\n  %s  (now %s)", names[i], names[j]);
+        }
+    }
+    if (msg[0])
+    {
+        char box[1400];
+        _snprintf_s(box, sizeof box, _TRUNCATE,
+                    "These files in the game's mods folder are older copies of mods that are now installed under a new "
+                    "name, and were not loaded:\n%s\n\nDelete them from the mods folder.", msg);
+        MessageBoxA(0, box, "Sims mod loader", MB_OK | MB_ICONWARNING | MB_TOPMOST | MB_SETFOREGROUND);
+    }
+    for (int i = 0; i < n; ++i)
+    {
+        if (bSkip[i]) continue;
         char path[MAX_PATH];
         _snprintf_s(path, sizeof path, _TRUNCATE, "%s\\mods\\%s", s_szExeDir, names[i]);
         HMODULE h = LoadLibraryA(path);

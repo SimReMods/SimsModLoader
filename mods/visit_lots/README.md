@@ -38,13 +38,13 @@ Open "x86 Native Tools Command Prompt for VS 2022" and run
 
     build.bat
 
-Output: `build\visit_lots.dll`.
+Output: `build\visit_lots_steam.dll` (Steam) and `build\ea\visit_lots_ea.dll` (EA app).
 
 ## Install
 
 1. Install the loader (`modloader\build\winmm.dll`) into the game folder.
-2. Copy `build\visit_lots.dll` to `<game folder>\mods\`.
+2. Copy `build\visit_lots_steam.dll` to `<game folder>\mods\`.
 3. Copy the contents of `data\` into the game folder (so that e.g. `<game folder>\GameData\Global\PersonGlobals.iff`
    exists next to `Global.far` and `<game folder>\ExpansionShared\HDSI_Ask.iff` next to `ExpansionShared.far`).
 
-Uninstall: delete `mods\visit_lots.dll` and the seven data files. Nothing original is modified.
+Uninstall: delete `mods\visit_lots_steam.dll` (`mods\visit_lots.dll` in older versions) and the seven data files. Nothing original is modified.

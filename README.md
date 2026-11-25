@@ -35,7 +35,8 @@ With the game closed, delete these files from the game folder (keep `winmm.dll` 
 winmm.dll
 README-MOD.txt
 mod.log
-mods\visit_lots.dll
+mods\visit_lots_steam.dll
+mods\visit_lots.dll (older versions)
 GameData\UIText2.iff
 GameData\Global\PersonGlobals.iff
 GameData\Global\DogGlobals.iff
@@ -78,7 +79,8 @@ With the game closed, delete these files from the game folder (keep `winmm.dll` 
 winmm.dll
 README-MULTISTORY.txt
 mod.log
-mods\multistory.dll
+mods\multistory_steam.dll
+mods\multistory.dll (older versions)
 UIGraphics\Res_Multistory.RT
 UIGraphics\Res_Multistory.h
 UIGraphics\Multistory\StoryDown.bmp
@@ -110,7 +112,8 @@ With the game closed, delete these files from the game folder (keep `winmm.dll` 
 winmm.dll
 README-EYEDROPPER.txt
 mod.log
-mods\eyedropper.dll
+mods\eyedropper_steam.dll
+mods\eyedropper.dll (older versions)
 UIGraphics\Res_Eyedropper.RT
 UIGraphics\Res_Eyedropper.h
 UIGraphics\Eyedropper\EyedropperBtn.bmp

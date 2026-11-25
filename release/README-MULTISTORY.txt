@@ -7,7 +7,7 @@ BACK UP YOUR SAVES FIRST. With the game closed, copy %USERPROFILE%\Saved Games\E
 
 Install: extract this zip into the game folder (the one with Sims.exe), keeping the folder structure:
   winmm.dll                           the mod loader (a proxy of the system winmm.dll)
-  mods\multistory.dll                 the mod
+  mods\multistory_steam.dll           the mod
   UIGraphics\Res_Multistory.RT        registers the story button art (UIGraphics.far is untouched)
   UIGraphics\Res_Multistory.h         its resource ids
   UIGraphics\Multistory\StoryDown.bmp the "one story down" button
@@ -18,7 +18,8 @@ Removing everything above the second floor should let you load back without the 
 
 Uninstall: delete these files from the game folder:
   winmm.dll                (keep it if another mod in the mods folder uses it)
-  mods\multistory.dll
+  mods\multistory_steam.dll
+  mods\multistory.dll  (older versions of the mod)
   UIGraphics\Res_Multistory.RT
   UIGraphics\Res_Multistory.h
   UIGraphics\Multistory\StoryDown.bmp

@@ -17,7 +17,7 @@ BEGIN
             VALUE "FileDescription", "Visit Lots mod for The Sims Legacy Collection"
             VALUE "FileVersion", VER_STRING
             VALUE "InternalName", "visit_lots"
-            VALUE "OriginalFilename", "visit_lots.dll"
+            VALUE "OriginalFilename", "visit_lots_steam.dll"
             VALUE "ProductName", "SimMods"
             VALUE "ProductVersion", VER_STRING
         END

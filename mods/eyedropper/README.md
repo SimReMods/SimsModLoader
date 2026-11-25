@@ -13,7 +13,7 @@ under the cursor and selects its catalog entry:
 
 ## Install
 
-Needs the SimsModLoader `winmm.dll` in the game folder (Steam Legacy Collection 1.10.7.0). Copy `eyedropper.dll` into
+Needs the SimsModLoader `winmm.dll` in the game folder (Steam Legacy Collection 1.10.7.0). Copy `eyedropper_steam.dll` into
 the game's `mods` folder and `data\UIGraphics` into the game's `UIGraphics` folder. Without the `UIGraphics` files there
 is no button (the `E` key still works) and the eyedropper uses the pointing-hand cursor. It can be installed together
 with visit_lots and multistory (on multistory's stories 3-4 objects and walls are picked, floors are not, and a
@@ -38,7 +38,7 @@ in `eyedropper.cpp`; the loader has already matched the exe build, so its addres
 
 ## Build
 
-From the "x86 Native Tools Command Prompt for VS": `build.bat` -> `build\eyedropper.dll`.
+From the "x86 Native Tools Command Prompt for VS": `build.bat` -> `build\eyedropper_steam.dll`, `build\ea\eyedropper_ea.dll` (EA app).
 
 | file | |
 |---|---|
