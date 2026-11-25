@@ -1,8 +1,9 @@
-// loader_main.cpp - module base, decrypt detection, and loading of the mod DLLs.
+// loader_main.cpp - module base, game build detection, decrypt detection, and loading of the mod DLLs.
 //
-// .text is still encrypted by the Steam stub when DllMain runs, so nothing is patched at attach. The first proxied
-// export called from a return address inside .text comes from decrypted game code; the OEP bytes are then verified
-// against the reference build before any mod loads.
+// The game build is picked from g_GameBuilds by its PE header. For the Legacy Collection .text is still encrypted by
+// the Steam stub when DllMain runs, so nothing is patched at attach. The first proxied export called from a return
+// address inside .text comes from runnable game code; the OEP bytes are then verified against the build before any
+// mod loads. (The Complete Collection is not encrypted: its first call passes at once.)
 #include <windows.h>
 #include <stdio.h>
 #include <string.h>
@@ -22,6 +23,7 @@ static volatile LONG s_nCallsBefore = 0;    // proxied calls seen before init (f
 static int s_nFailedChecks = 0;
 static char s_szExeDir[MAX_PATH];
 static SimsLoaderApi s_api;
+static const GameBuild *s_pBuild = 0;       // the running game, from CheckExeIdentity
 
 static void FindTextSection()
 {
@@ -43,11 +45,6 @@ static void FindTextSection()
             s_pText = orig::ptr<unsigned char>(sec[i].VirtualAddress);
             s_nText = sec[i].Misc.VirtualSize;
         }
-    }
-    if (!s_pText)
-    {
-        s_pText = orig::ptr<unsigned char>(ORIG_TEXT_RVA); s_nText = ORIG_TEXT_SIZE;
-        Log("  no .text section header: using the decrypted exe's range");
     }
 }
 
@@ -77,7 +74,7 @@ static void WrongExe(const char *pszWhat)
     Log("EXE CHECK FAILED: %s -> mods will NOT be loaded; the game runs unmodified", pszWhat);
     char msg[700];
     _snprintf_s(msg, sizeof msg, _TRUNCATE,
-                "This Sims.exe is not the build the installed mod was made for.\n\n%s\n\n"
+                "This Sims.exe is not a game version the installed mod loader supports.\n\n%s\n\n"
                 "The mod has been disabled for this run; the game starts unmodified.\n"
                 "Remove winmm.dll and the mods folder from the game directory, or install a mod build that matches this game version.",
                 pszWhat);
@@ -89,14 +86,28 @@ static bool CheckExeIdentity()
     const IMAGE_DOS_HEADER *dos = (const IMAGE_DOS_HEADER *)(UINT_PTR)orig::base;
     const IMAGE_NT_HEADERS *nt = (const IMAGE_NT_HEADERS *)((const char *)dos + dos->e_lfanew);
     unsigned ts = nt->FileHeader.TimeDateStamp, cs = nt->OptionalHeader.CheckSum, si = nt->OptionalHeader.SizeOfImage;
-    Log("exe identity: TimeDateStamp 0x%08x CheckSum 0x%08x SizeOfImage 0x%08x (expected 0x%08x / 0x%08x / 0x%08x)",
-        ts, cs, si, ORIG_PACKED_TIMESTAMP, ORIG_PACKED_CHECKSUM, ORIG_PACKED_SIZEOFIMAGE);
-    if (ts == ORIG_PACKED_TIMESTAMP && cs == ORIG_PACKED_CHECKSUM && si == ORIG_PACKED_SIZEOFIMAGE && !GetEnvironmentVariableA("SIMSMOD_FAKE_UPDATE", 0, 0))
-        return true;
-    char why[300];
-    _snprintf_s(why, sizeof why, _TRUNCATE, "PE header: TimeDateStamp 0x%08x, CheckSum 0x%08x, SizeOfImage 0x%08x\nexpected:  TimeDateStamp 0x%08x, CheckSum 0x%08x, SizeOfImage 0x%08x%s",
-                ts, cs, si, ORIG_PACKED_TIMESTAMP, ORIG_PACKED_CHECKSUM, ORIG_PACKED_SIZEOFIMAGE,
-                GetEnvironmentVariableA("SIMSMOD_FAKE_UPDATE", 0, 0) ? "\n(SIMSMOD_FAKE_UPDATE is set: simulated mismatch)" : "");
+    bool bFake = GetEnvironmentVariableA("SIMSMOD_FAKE_UPDATE", 0, 0) != 0;
+    for (const GameBuild &b : g_GameBuilds)
+        if (ts == b.timestamp && cs == b.checksum && si == b.sizeOfImage && !bFake)
+        {
+            s_pBuild = &b;
+            Log("exe identity: TimeDateStamp 0x%08x CheckSum 0x%08x SizeOfImage 0x%08x -> %s", ts, cs, si, b.pszName);
+            if (!s_pText)
+            {
+                s_pText = orig::ptr<unsigned char>(b.textRva);
+                s_nText = b.textSize;
+                Log("  no .text section header: using the known range");
+            }
+            return true;
+        }
+    Log("exe identity: TimeDateStamp 0x%08x CheckSum 0x%08x SizeOfImage 0x%08x -> unknown build", ts, cs, si);
+    char why[600];
+    int n = _snprintf_s(why, sizeof why, _TRUNCATE, "PE header: TimeDateStamp 0x%08x, CheckSum 0x%08x, SizeOfImage 0x%08x\nsupported:", ts, cs, si);
+    for (const GameBuild &b : g_GameBuilds)
+        if (n > 0 && (unsigned)n < sizeof why)
+            n += _snprintf_s(why + n, sizeof why - n, _TRUNCATE, "\n  %s (0x%08x, 0x%08x, 0x%08x)", b.pszName, b.timestamp, b.checksum, b.sizeOfImage);
+    if (bFake && n > 0 && (unsigned)n < sizeof why)
+        _snprintf_s(why + n, sizeof why - n, _TRUNCATE, "\n(SIMSMOD_FAKE_UPDATE is set: simulated mismatch)");
     WrongExe(why);
     return false;
 }
@@ -139,10 +150,10 @@ static bool CheckTextHash()
 {
     DWORD t0 = GetTickCount();
     unsigned long long h = TextHash();
-    Log("decrypted .text FNV-1a 64 (reloc sites zeroed): 0x%016llx, expected 0x%016llx (%lu ms)", h, (unsigned long long)ORIG_TEXT_FNV64, GetTickCount() - t0);
-    if (h == ORIG_TEXT_FNV64) return true;
+    Log("decrypted .text FNV-1a 64 (reloc sites zeroed): 0x%016llx, expected 0x%016llx (%lu ms)", h, s_pBuild->textFnv64, GetTickCount() - t0);
+    if (h == s_pBuild->textFnv64) return true;
     char why[200];
-    _snprintf_s(why, sizeof why, _TRUNCATE, "code hash of the decrypted game: 0x%016llx\nexpected:                        0x%016llx", h, (unsigned long long)ORIG_TEXT_FNV64);
+    _snprintf_s(why, sizeof why, _TRUNCATE, "code hash of the decrypted game: 0x%016llx\nexpected:                        0x%016llx", h, s_pBuild->textFnv64);
     WrongExe(why);
     return false;
 }
@@ -163,10 +174,10 @@ void Loader_OnAttach(void *hThisDll)
     GetModuleFileNameA((HMODULE)hThisDll, self, MAX_PATH);
     Log("==== loader attached: %s (pid %lu)", self, GetCurrentProcessId());
     FindTextSection();
+    if (!CheckExeIdentity()) return;
     char why[160];
-    bool oepOk = Sig_Check(ORIG_SIG_7a8a86, why, sizeof why);
+    bool oepOk = Sig_Check(s_pBuild->oep, why, sizeof why);
     LogV("at attach: .text %p..%p, OEP bytes %s (%s)", s_pText, s_pText + s_nText, oepOk ? "ALREADY DECRYPTED" : "still packed", oepOk ? "-" : why);
-    CheckExeIdentity();
 }
 
 static void LoadMods()
@@ -174,6 +185,7 @@ static void LoadMods()
     s_api.size = sizeof s_api; s_api.version = SIMSMOD_API_VERSION;
     s_api.exeBase = orig::base; s_api.exeDelta = orig::delta; s_api.exeDir = s_szExeDir;
     s_api.Log = Log; s_api.SigCheck = Api_SigCheck; s_api.Detour = Api_Detour; s_api.WriteCode = Detour_WriteCode;
+    s_api.gameBuild = s_pBuild->id;
 
     char pattern[MAX_PATH];
     _snprintf_s(pattern, sizeof pattern, _TRUNCATE, "%s\\mods\\*.dll", s_szExeDir);
@@ -195,6 +207,15 @@ static void LoadMods()
         if (!h) { Log("mod %s: LoadLibrary failed (%lu)", names[i], GetLastError()); continue; }
         PFN_SimsMod_Init init = (PFN_SimsMod_Init)GetProcAddress(h, "SimsMod_Init");
         if (!init) { Log("mod %s @ %p: no SimsMod_Init export, ignored", names[i], h); continue; }
+        const unsigned *pGames = (const unsigned *)GetProcAddress(h, "SimsMod_Games");
+        unsigned games = pGames ? *pGames : SIMSMOD_GAME_LEGACY;
+        if (!(games & s_pBuild->id))
+        {
+            Log("mod %s: not made for this game version (SimsMod_Games 0x%x%s), not started", names[i], games,
+                pGames ? "" : ", not exported: Legacy Collection only");
+            FreeLibrary(h);
+            continue;
+        }
         LogV("mod %s @ %p: SimsMod_Init ...", names[i], h);
         int r = init(&s_api);
         Log("mod %s: SimsMod_Init returned %d%s", names[i], r, r ? " (INACTIVE)" : "");
@@ -207,7 +228,7 @@ static void Initialise(const void *pRetAddr, const char *pszExport)
     LogV("first call into %s from game .text (return address %p = %s) after %ld proxied calls from elsewhere",
         pszExport, pRetAddr, ModuleNameOf(pRetAddr, who, sizeof who), s_nCallsBefore);
     char why[160];
-    if (!Sig_Check(ORIG_SIG_7a8a86, why, sizeof why))
+    if (!Sig_Check(s_pBuild->oep, why, sizeof why))
     {
         Log("decrypt check: OEP bytes do not match the reference build (%s): NOT loading mods", why);
         if (++s_nFailedChecks >= 50) { InterlockedExchange(&s_nState, 3); Log("giving up after %d failed checks", s_nFailedChecks); }

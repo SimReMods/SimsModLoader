@@ -4,6 +4,7 @@
 // then loads every mods\*.dll and calls its exported `SimsMod_Init(const SimsLoaderApi *)`. Everything a mod needs
 // from the loader comes through that table; the mod never touches the proxy or the decrypt logic.
 #pragma once
+#include <stddef.h>
 
 struct OrigSig                  // first bytes of a function in Sims.exe.decrypted.exe
 {
@@ -31,7 +32,23 @@ struct SimsLoaderApi
     // Raw code write (VirtualProtect + FlushInstructionCache) with every other thread suspended. For patching
     // code the mod owns; use Detour for the exe.
     bool (*WriteCode)(void *pDst, const void *pSrc, unsigned n);
+
+    // newer loaders only: read it through SimsMod_GetGame
+    unsigned int gameBuild;     // SIMSMOD_GAME_* the game is
 };
+
+// game builds (bits, also used by SimsMod_Games)
+#define SIMSMOD_GAME_LEGACY     0x1u    // The Sims Legacy Collection 1.10.7.0 (Steam)
+#define SIMSMOD_GAME_COMPLETE   0x2u    // The Sims Complete Collection (2003)
+
+// The game the mod runs in (SIMSMOD_GAME_*). Loaders older than gameBuild only ever ran the Legacy Collection.
+inline unsigned SimsMod_GetGame(const SimsLoaderApi *api)
+{
+    return api->size > offsetof(SimsLoaderApi, gameBuild) ? api->gameBuild : SIMSMOD_GAME_LEGACY;
+}
 
 // A mod exports this. Return 0 on success; anything else is logged and the mod is left loaded but inactive.
 typedef int (__cdecl *PFN_SimsMod_Init)(const SimsLoaderApi *api);
+
+// Optional export: `extern "C" __declspec(dllexport) const unsigned SimsMod_Games = SIMSMOD_GAME_...;` (bits).
+// Without it a mod is for the Legacy Collection only; the loader skips mods that do not list the running game.

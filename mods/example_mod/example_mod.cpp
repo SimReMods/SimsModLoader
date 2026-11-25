@@ -3,13 +3,17 @@
 #include <stdio.h>
 #include "simsmod.h"
 
+extern "C" __declspec(dllexport) const unsigned SimsMod_Games = SIMSMOD_GAME_LEGACY | SIMSMOD_GAME_COMPLETE;
+
 extern "C" __declspec(dllexport) int __cdecl SimsMod_Init(const SimsLoaderApi *api)
 {
     if (api->version != SIMSMOD_API_VERSION)
         return 1;
-    api->Log("[example_mod] loaded; game base 0x%08x, game folder %s", api->exeBase, api->exeDir);
+    const char *pszGame = SimsMod_GetGame(api) == SIMSMOD_GAME_COMPLETE ? "Complete Collection" : "Legacy Collection";
+    api->Log("[example_mod] loaded in the %s; game base 0x%08x, game folder %s", pszGame, api->exeBase, api->exeDir);
     char msg[300];
-    _snprintf_s(msg, sizeof msg, _TRUNCATE, "example_mod is running inside the game.\n\nexe base 0x%08x\nfolder %s", api->exeBase, api->exeDir);
+    _snprintf_s(msg, sizeof msg, _TRUNCATE, "example_mod is running inside the game (%s).\n\nexe base 0x%08x\nfolder %s",
+                pszGame, api->exeBase, api->exeDir);
     MessageBoxA(0, msg, "example_mod", MB_OK | MB_ICONINFORMATION | MB_TOPMOST);
     return 0;
 }
