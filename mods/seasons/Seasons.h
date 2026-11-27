@@ -76,7 +76,7 @@ void Seasons_PaintOverlay(cTSBuffer *pViewBuf, int nLeft, int nTop, int nRight, 
 void Seasons_PaintOverlay(int nLeft, int nTop, int nRight, int nBottom);
 #endif
 
-// find_location_for modes 7..10 (snow): true when the mode is one of them (*pnResult set)
+// find_location_for modes 7..11 (snow): true when the mode is one of them (*pnResult set)
 bool Seasons_FindGoodLocation(cXObject *pThis, StackElem *pFrame, BehaviorNodeParam *pParams, int *pnResult);
 
 // dressing at the door (cXObject::SetLocation reports a Sim's room change; cXPerson::TryGotoRoutingSlot takes the outfit)

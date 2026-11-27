@@ -236,7 +236,7 @@ static short __fastcall W_InterpValue(cXObject *p, void *, int nOwner, short nIn
     return r;
 }
 
-// cXObject::TryFindGoodLocation: find_location_for modes 7..10 (snow) are the mod's; any other mode runs the original
+// cXObject::TryFindGoodLocation: find_location_for modes 7..11 (snow) are the mod's; any other mode runs the original
 ORIG(TryFindGoodLocation, int(__thiscall *)(cXObject *, StackElem *, BehaviorNodeParam *));
 static int __fastcall W_TryFindGoodLocation(cXObject *p, void *, StackElem *pFrame, BehaviorNodeParam *pParams)
 {

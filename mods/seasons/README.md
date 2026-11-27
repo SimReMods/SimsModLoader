@@ -2,7 +2,7 @@
 
 The engine part of "The Sims: Seasons" (https://github.com/SimReMods/Seasons), as a patch mod: seasons and weather on
 normal lots, the season icon and calendar in the control panel, raincoats / umbrellas / winter clothes at the door,
-snow locations for Seasons objects (find_location_for modes 7..10), the seasons globals 38..49 writable from trees, the
+snow locations for Seasons objects (find_location_for modes 7..11), the seasons globals 38..49 writable from trees, the
 `ExpansionPack8` objects folder and the extra careers of `ExpansionPack8\SeasonsCareers.iff` (job panel art and at-work
 portraits included).
 

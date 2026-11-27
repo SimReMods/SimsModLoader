@@ -418,6 +418,21 @@ static bool g_bRainwear;                        // raining, no winterwear: rainc
 static int Seasons_RainwearArt();
 static float g_fSnowfall;                       // the snow intensity right now (0 when not snowing)
 
+// The seasonal palette is switched on by Seasons_TerrainSetColorPrefix, which only runs for normal-ground lots: the
+// beach, the snowy vacation lots and Magic Town get their own swatch (MakeSand / MakeSnow / ...) and never reach it. So
+// the flag must follow the lot being drawn, or the last seasonal lot's ground (grass, leaves, its snow amount) replaces
+// that swatch's colours through the hooks below: arriving from home, a Vacation snow lot showed bare grass.
+static bool SeasonalPaletteNow()
+{
+    if (g_bSeasonalPalette)
+    {
+        cSimulator *pSim = Sim();
+        if (!pSim || !IsSeasonalHouse(pSim->m_Globals.CurrentHouse))
+            g_bSeasonalPalette = false;
+    }
+    return g_bSeasonalPalette;
+}
+
 void Seasons_TerrainSetColorPrefix(cTerrain *pTerrain)
 {
     // the original's own tests: only the branch that ends in MakeDirt (a cColorSwatch on any other lot than the sand,
@@ -482,7 +497,7 @@ static void SeasonalRowColors(int iColor, int nColors, unsigned long *pLight, un
 
 bool Seasons_GetPaletteRow(int iColor, int nColors, unsigned long *pLight, unsigned long *pDark)
 {
-    if (!g_bSeasonalPalette || nColors < 32)
+    if (!SeasonalPaletteNow() || nColors < 32)
         return false;
     unsigned long nL, nD;
     SeasonalRowColors(iColor, nColors, &nL, &nD);
@@ -500,7 +515,7 @@ bool Seasons_GetPaletteRow(int iColor, int nColors, unsigned long *pLight, unsig
 
 int Seasons_AdjustColorIndex(signed char nTileX, signed char nTileY, int nIndex, int nColors)
 {
-    if (!g_bSeasonalPalette || nColors < 32 || !Lot())
+    if (!SeasonalPaletteNow() || nColors < 32 || !Lot())
         return nIndex;
     int nLeafRows = kLeafRowCount * nColors / 32;
     // grass rows are squeezed into the upper part of the table
@@ -608,7 +623,7 @@ static float SnowShelter(int cx, int cy)
 // snow cover 0..1 at a terrain corner given by its 3D position (1 tile = 3 units)
 static float SnowCoverAt(const float *pPos)
 {
-    if (!g_bSeasonalPalette || g_fAppliedSnow <= 0.0f || !Lot())
+    if (!SeasonalPaletteNow() || g_fAppliedSnow <= 0.0f || !Lot())
         return 0.0f;
     // view-rotated tile space: tile x from pos[0], tile y from pos[2]
     int cx = (int)floorf(pPos[0] / 3.0f + 0.5f);
@@ -631,7 +646,7 @@ static float SnowCoverAt(const float *pPos)
 void Seasons_TerrainCornerColors(const float *pPos, const unsigned char *pLightIdx, const unsigned char *pRowIdx,
                                  unsigned int *pColors)
 {
-    if (!g_bSeasonalPalette || g_fAppliedSnow <= 0.0f)
+    if (!SeasonalPaletteNow() || g_fAppliedSnow <= 0.0f)
         return;
     unsigned long nSnowL = g_bDaytime ? 0xE6F0FF : 0x828C9B;
     unsigned long nSnowD = g_bDaytime ? 0xA1B4D2 : 0x6E6E82;
@@ -651,7 +666,7 @@ void Seasons_TerrainCornerColors(const float *pPos, const unsigned char *pLightI
 
 void Seasons_TerrainDetailAlpha(const float *pPos, float *pAlpha)
 {
-    if (!g_bSeasonalPalette || g_fAppliedSnow <= 0.0f)
+    if (!SeasonalPaletteNow() || g_fAppliedSnow <= 0.0f)
         return;
     for (int i = 0; i < 4; i++)
     {
@@ -1361,7 +1376,7 @@ void Seasons_PaintOverlay(int nLeft, int nTop, int nRight, int nBottom)
     // ---- trees moved (autumn): rebuild the leaf map ----
     static int s_nFrame;
     s_nFrame++;
-    if (g_bSeasonalPalette && g_fAppliedLeaf > 0.0f && (s_nFrame % 30) == 0 && ComputeTreeSignature() != g_nLeafSignature)
+    if (SeasonalPaletteNow() && g_fAppliedLeaf > 0.0f && (s_nFrame % 30) == 0 && ComputeTreeSignature() != g_nLeafSignature)
     {
         BuildLeafMap();
         GlobalDispatch(131, 0);
@@ -1772,9 +1787,12 @@ void Seasons_PaintOverlay(int nLeft, int nTop, int nRight, int nBottom)
 #endif
 }
 
-// ---- find_location_for modes 7..10 (snow) ------------------------------------------------------------------------
-// Not in the original (Seasons Controller; SimC FindLocationMode.OutdoorFloor / OutdoorOffRoad). All keep off the road:
-// the asphalt of the street and the driveway (built-in floors 9..11 on a locked tile), where the car portal places cars.
+// ---- find_location_for modes 7..11 (snow) ------------------------------------------------------------------------
+// Not in the original (Seasons Controller; SimC FindLocationMode.OutdoorFloor / OutdoorOffRoad). All keep off the road
+// floors, where the car portal places cars. Road = IsRoadTile: asphalt 9..11 anywhere, or a floored street-strip tile
+// except the sidewalk (12).
+//  11 OnRoad:        no search and no move: true when the stack object stands on a road tile (IsRoadTile). Snow
+//                     drifts left on the street by older builds test it and remove themselves (Seasons SnowDrift).
 //   7 OutdoorFloor:   a random free ground tile that has a floor (patio, path, sidewalk) and lies outdoors.
 //   8 OutdoorOffRoad: a free outdoor ground tile, floor or not; the nearest one to the object in `from` when given
 //                     (a patch grows), else a random one.
@@ -1787,6 +1805,7 @@ static const int kFindLocationOutdoorFloor = 7;
 static const int kFindLocationOutdoorOffRoad = 8;
 static const int kFindLocationOutdoorGround = 9;
 static const int kFindLocationOutdoorGroundSmall = 10;
+static const int kFindLocationOnRoad = 11;
 enum { SAE_NoStackObject = 0x15, SAE_ObjectRefNotFound = 0x17, SAE_LocalOutOfRange = 0x33 };
 
 static bool IsOutdoorRoom(unsigned short nRoom)
@@ -1797,11 +1816,17 @@ static bool IsOutdoorRoom(unsigned short nRoom)
     return pRoom && pRoom->IsOutside();
 }
 
+// The road: snow never lands there (cars and the school bus drive on it); everywhere else outdoors it may.
+// Road = asphalt anywhere (floors.iff 9, 10 / 11 with lane lines), or a floored tile of the locked street strip
+// (tile flag 0x20) other than the cement sidewalk (12): Vacation Island's road there is the Emulse plug-in floor,
+// whose id differs per install, so the lock tells it apart from Emulse laid in a garden. Grass verges get snow.
 static bool IsRoadTile(cFixedWorld *pWorld, int x, int y)
 {
     unsigned short nFloor = (*pWorld->m_pFloorsByLevel[1])[x][y];
     bool bLocked = (((*pWorld->m_pFlags[0])[x][y] >> 5) & 1) != 0;
-    return bLocked && nFloor >= 9 && nFloor <= 11;          // floors.iff: 9 asphalt, 10 / 11 asphalt with lane lines
+    if (nFloor >= 9 && nFloor <= 11)
+        return true;
+    return bLocked && nFloor != 0 && nFloor != 12;
 }
 
 static bool IsBareOutdoorGround(cFixedWorld *pWorld, int x, int y)
@@ -1960,7 +1985,7 @@ bool Seasons_FindGoodLocation(cXObject *pThis, StackElem *pFrame, BehaviorNodePa
 {
     int nMode = pParams->m_Op[0];
     if (nMode != kFindLocationOutdoorFloor && nMode != kFindLocationOutdoorOffRoad && nMode != kFindLocationOutdoorGround &&
-        nMode != kFindLocationOutdoorGroundSmall)
+        nMode != kFindLocationOutdoorGroundSmall && nMode != kFindLocationOnRoad)
         return false;
     cXObject *pStackObj = pThis->m_pModule->GetObject(pFrame->m_nStackObjectId);
     if (!pStackObj)
@@ -1975,7 +2000,14 @@ bool Seasons_FindGoodLocation(cXObject *pThis, StackElem *pFrame, BehaviorNodePa
         if (!pRefObj)
             throw (short)SAE_ObjectRefNotFound;
     }
-    if (nMode == kFindLocationOutdoorFloor)
+    if (nMode == kFindLocationOnRoad)                       // a test only: the object stays where it is
+    {
+        int x = pStackObj->m_nPosX16 >> 4, y = pStackObj->m_nPosY16 >> 4;
+        cFixedWorld *pWorld = World();
+        *pnResult = pStackObj->m_nLevel == 1 && x >= 0 && y >= 0 && x < pWorld->m_nSize && y < pWorld->m_nSize &&
+                    IsRoadTile(pWorld, x, y) ? 1 : 0;      // out of the world or upstairs: not on the road
+    }
+    else if (nMode == kFindLocationOutdoorFloor)
         *pnResult = FindSnowLocation(pStackObj, true, 0);
     else if (nMode == kFindLocationOutdoorOffRoad)
         *pnResult = FindSnowLocation(pStackObj, false, pRefObj);
