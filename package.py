@@ -33,6 +33,7 @@ PACKAGES = {
     'visit_lots': ('README-MOD.txt', ('steam', 'ea', 'cc'), ''),
     'multistory': ('README-MULTISTORY.txt', ('steam', 'ea'), ''),
     'eyedropper': ('README-EYEDROPPER.txt', ('steam', 'ea', 'cc'), ''),
+    'all_cheats': ('README-ALLCHEATS.txt', ('steam', 'ea', 'cc'), ''),
     # the Seasons installer (github.com/SimReMods/Seasons) downloads these; players install that, not these zips
     'seasons': ('README-SEASONS.txt', ('steam', 'ea', 'cc'), '-DO-NOT-DOWNLOAD'),
 }

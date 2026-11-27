@@ -80,6 +80,10 @@ jobs:
         shell: cmd
         run: mods\seasons\build.bat
 
+      - name: Build all_cheats
+        shell: cmd
+        run: mods\all_cheats\build.bat
+
       - name: Package
         shell: pwsh
         run: |
