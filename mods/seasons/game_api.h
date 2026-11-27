@@ -5,6 +5,13 @@
 // Memory: the mod's operator new / delete are the exe's (seasons.cpp), so the std containers and strings of this DLL
 // and of the exe share one heap, and the exe's std::vector / std::string / std::map (the same MSVC STL, release
 // layout) are used here as the real types: the mod may push into a game vector and the game may free it later.
+//
+// GAME_CC=1 builds for the Complete Collection (2003, VC6 + SGI STL): game_addr_cc.h, and GA_O(legacy, cc) picks the
+// 2003 offset of a field where the class layout differs (VC6 string 12 bytes, members only Legacy has). The 2003
+// containers are not this DLL's: a vector is laid out the same (three pointers) but grows through the SGI pool
+// allocator, a string is 12 bytes (start, finish, end of storage). So under GAME_CC the game's vectors are GVec (read
+// only; the mod grows one only through the exe's own push_back), its strings GameString (built, assigned and freed by
+// the exe's own string functions), and the objects the game deletes are allocated with the exe's operator new.
 #pragma once
 #include <stddef.h>
 #include <string.h>
@@ -13,8 +20,23 @@
 #include <functional>
 #include <cstddef>
 
+#ifndef GAME_CC
+#define GAME_CC 0
+#endif
+// GAME_EA=1: the Legacy Collection from the EA app - the Steam code relinked at other addresses (game_addr_ea.h is
+// generated from game_addr.h by tools/port_addrs.py); class layouts are the same.
 #ifndef GAME_EA
 #define GAME_EA 0
+#endif
+#if GAME_CC
+#define GA_ADDR_FILE "game_addr_cc.h"
+#define GA_O(legacy, cc) (cc)
+#elif GAME_EA
+#define GA_ADDR_FILE "game_addr_ea.h"
+#define GA_O(legacy, cc) (legacy)
+#else
+#define GA_ADDR_FILE "game_addr.h"
+#define GA_O(legacy, cc) (legacy)
 #endif
 
 #pragma warning(push)
@@ -43,11 +65,7 @@ namespace ga
 #define GA_RTTI(n, va, s) n = va,
 #define GA_VTBL(n, va) n = va,
 #define GA_VSLOT(n, vt, slot, fn) n = slot,
-#if GAME_EA
-#include "game_addr_ea.h"                               // the EA app build: same code, other addresses
-#else
-#include "game_addr.h"
-#endif
+#include GA_ADDR_FILE
 #undef GA_FN
 #undef GA_DATA
 #undef GA_CALL
@@ -105,6 +123,48 @@ namespace ga
     struct cTSPoint { long x, y; };
     struct cTSRect { long left, top, right, bottom; };
 
+    // ---- the game's containers ----------------------------------------------------------------------------------
+#if GAME_CC
+    // std::vector<T> as the 2003 exe lays it out (SGI: start, finish, end of storage). Read and shrunk in place only;
+    // it grows through the exe's own push_back for that element type (PushBack), which allocates from the exe's pool.
+    template <class T> struct GVec
+    {
+        T *_Myfirst, *_Mylast, *_Myend;
+        size_t size() const { return (size_t)(_Mylast - _Myfirst); }
+        bool empty() const { return _Myfirst == _Mylast; }
+        T &operator[](size_t i) const { return _Myfirst[i]; }
+        T *begin() const { return _Myfirst; }
+        T *end() const { return _Mylast; }
+        T &back() const { return _Mylast[-1]; }
+        void PushBack(unsigned vaPushBack, const T &x) { ThisCall<void>(vaPushBack, this, &x); }
+    };
+    // std::string as the 2003 exe lays it out (SGI: start, finish, end of storage; NUL-terminated), built, assigned and
+    // freed by the exe's own functions (its pool allocator owns the text)
+    class GameString
+    {
+    public:
+        char *_M_start, *_M_finish, *_M_end_of_storage;
+        explicit GameString(const char *psz) { ThisCall<void>(A::GameString__GameString, this, psz); }
+        ~GameString() { ThisCall<void>(A::GameString___GameString, this); }
+        GameString(const GameString &) = delete;
+        GameString &operator=(const GameString &) = delete;
+        GameString &operator=(const char *psz) { ThisCall<void>(A::GameString__assign, this, psz); return *this; }
+        const char *c_str() const { return _M_start ? _M_start : ""; }
+        size_t size() const { return (size_t)(_M_finish - _M_start); }
+        // std::string::compare(0, n, psz)
+        int compare(size_t nPos, size_t n, const char *psz) const
+        {
+            size_t nLen = size() - nPos < n ? size() - nPos : n, nOther = strlen(psz);
+            int r = memcmp(c_str() + nPos, psz, nLen < nOther ? nLen : nOther);
+            return r ? r : (nLen < nOther ? -1 : nLen > nOther ? 1 : 0);
+        }
+    };
+    static_assert(sizeof(GameString) == 12, "GameString");
+#else
+    template <class T> using GVec = std::vector<T>;
+    typedef std::string GameString;
+#endif
+
     // ---- strings ----------------------------------------------------------------------------------------------------
 
     // StringBuffer (vptr, buffer, length, capacity) and StackString<N>: the exe's ctor sets the vtable (the virtual
@@ -143,20 +203,107 @@ namespace ga
     };
     static_assert(sizeof(StackString<256>) == 0x10C, "StackString<256>");
 
-    // CTGString / cTSString: std::string with extra methods (24 bytes, the same MSVC layout as this DLL's std::string)
-    class CTGString : public std::string
+    // CTGString / cTSString: std::string with extra methods (24 bytes, the same MSVC layout as this DLL's std::string;
+    // 2003: the exe's 12-byte string)
+    class CTGString : public GameString
     {
     public:
-        CTGString(const char *psz) : std::string(psz) {}
+        CTGString(const char *psz) : GameString(psz) {}
     };
-    class cTSString : public std::string
+    class cTSString : public GameString
     {
     public:
-        cTSString(const char *psz) : std::string(psz) {}
+        cTSString(const char *psz) : GameString(psz) {}
     };
-    static_assert(sizeof(CTGString) == 24, "CTGString");
+    static_assert(sizeof(CTGString) == GA_O(24, 12), "CTGString");
 
     // ---- render layer -----------------------------------------------------------------------------------------------
+#if GAME_CC
+    // the 2003 renderer: software drawing into 16-bit cTSBuffers (DirectDraw surfaces or system memory), each window
+    // into its buffer, the lot view into HouseViewer's view buffer
+    struct cTSPixelFormat { int m_nFormat, m_nBitsPerPixel; };                  // passed by value (two dwords)
+    struct cTSBlitFlags { unsigned long m_nColorKey, m_nFlags; };              // the source colour key, mirror bits
+    enum { kTSLockBlit = 0x10, kTSLockPixels = 0x40 };                        // cTSBuffer::Lock / Unlock modes
+    class cTSBuffer                                     // 0x64 bytes, reference counted (+0x58), 58 virtual slots
+    {
+    public:
+        enum { kSize = 0x64 };
+        union
+        {
+            GA_F(0x08, cTSPixelFormat, m_PixelFormat) GA_F(0x14, cTSRect, m_rcBounds) GA_F(0x24, cTSBlitFlags, m_BlitFlags)
+            GA_F(0x58, int, m_nRefCount) GA_SIZE(kSize)
+        };
+        cTSBuffer() = delete;
+        bool Create(int nWidth, int nHeight, cTSPixelFormat fmt, void *pPalette, int bVideoMemory, int nMemType)
+        {
+            return VCall<bool>(this, 3, nWidth, nHeight, fmt, pPalette, bVideoMemory, nMemType);
+        }
+        bool Lock(int nMode) { return VCall<bool>(this, 8, nMode); }
+        bool Unlock(int nMode) { return VCall<bool>(this, 9, nMode); }
+        void ClearColorKey() { VCall<void>(this, 28); }
+        void SetBlitFlags(const cTSBlitFlags *p) { VCall<void>(this, 29, p); }
+        bool Blit(cTSBuffer *pSrc, const cTSRect *pSrcRect, const cTSRect *pDstRect, const cTSRect *pClip)
+        {
+            return VCall<bool>(this, 39, pSrc, pSrcRect, pDstRect, pClip);
+        }
+        void *GetBits() { return VCall<void *>(this, 51); }
+        int GetPitch() { return VCall<int>(this, 52); }                          // bytes
+        unsigned short MakeNativeColor(int r, int g, int b)
+        {
+            return ThisCall<unsigned short>(A::cTSBuffer__MakeNativeColor, this, r & 0xFF, g & 0xFF, b & 0xFF);
+        }
+        bool Is565() { return MakeNativeColor(0, 255, 0) == 0x07E0; }
+        void AddRef() { ThisCall<int>(A::cTSBuffer__AddRef, this); }
+        void Release() { ThisCall<int>(A::cTSBuffer__Release, this); }        // deletes the buffer at 0
+        // a new empty buffer from the exe's heap and constructor (refcount 0)
+        static cTSBuffer *New()
+        {
+            void *p = Call<void *>(A::operator_new, (size_t)kSize);
+            return p ? ThisCall<cTSBuffer *>(A::cTSBuffer__cTSBuffer, p) : 0;
+        }
+    };
+    static_assert(sizeof(cTSBuffer) == 0x64, "cTSBuffer");
+
+    // cTSBufferRef (2003): a cTSBuffer * holding one reference (the exe's handle is out of line; same AddRef / Release)
+    class cTSBufferRef
+    {
+    public:
+        cTSBuffer *m_p;
+        cTSBufferRef() : m_p(0) {}
+        explicit cTSBufferRef(cTSBuffer *p) : m_p(p) { if (m_p) m_p->AddRef(); }
+        cTSBufferRef(const cTSBufferRef &o) : m_p(o.m_p) { if (m_p) m_p->AddRef(); }
+        cTSBufferRef(cTSBufferRef &&o) noexcept : m_p(o.m_p) { o.m_p = 0; }
+        ~cTSBufferRef() { Reset(); }
+        cTSBufferRef &operator=(const cTSBufferRef &o)
+        {
+            if (o.m_p)
+                o.m_p->AddRef();
+            Reset();
+            m_p = o.m_p;
+            return *this;
+        }
+        cTSBufferRef &operator=(cTSBufferRef &&o) noexcept
+        {
+            if (&o != this)
+            {
+                Reset();
+                m_p = o.m_p;
+                o.m_p = 0;
+            }
+            return *this;
+        }
+        void Reset()
+        {
+            cTSBuffer *p = m_p;
+            m_p = 0;
+            if (p)
+                p->Release();
+        }
+        cTSBuffer *Get() const { return m_p; }
+    };
+    static_assert(sizeof(cTSBufferRef) == 4, "cTSBufferRef");
+    inline cTSRect RectOfBuffer(const cTSBuffer *p) { return p ? p->m_rcBounds : cTSRect{ 0, 0, 0, 0 }; }
+#else
 
     struct TextureRef                                   // 0x50 bytes
     {
@@ -304,6 +451,7 @@ namespace ga
         CallRet(&r, A::Texture_LoadWithDecoder, pDevice, pSrc, pOpts);
         return r;
     }
+#endif
 
     // ---- lots, terrain ----------------------------------------------------------------------------------------------
 
@@ -385,14 +533,15 @@ namespace ga
     class cXObject
     {
     public:
-        enum { kSize = 0x190 };
+        enum { kSize = GA_O(0x190, 0x18C) };
         union
         {
             GA_F(0x02C, short *, m_pAttributes) GA_F(0x030, int, m_nNumAttributes) GA_A(0x03A, short, m_Temps, 8)
             GA_A(0x04A, short, m_aData, 73) GA_F(0x04C, short, m_nDirection) GA_F(0x084, short, m_nRoom)
             GA_F(0x0DC, ObjectModule *, m_pModule) GA_F(0x0F0, short, m_nObjectId) GA_F(0x0F4, int, m_nPosY16)
             GA_F(0x0F8, int, m_nPosX16) GA_F(0x0FC, CTilePt, m_Tile) GA_F(0x110, int, m_nLevel)
-            GA_F(0x11C, OBJD *, m_pObjdData) GA_F(0x120, ObjSelector *, m_pSelector) GA_F(0x12C, short **, m_pInterpDest)
+            GA_F(GA_O(0x11C, 0x118), OBJD *, m_pObjdData) GA_F(GA_O(0x120, 0x11C), ObjSelector *, m_pSelector)
+            GA_F(GA_O(0x12C, 0x128), short **, m_pInterpDest)
             GA_SIZE(kSize)
         };
         bool CanPlace(const FTilePt &pos, int nLevel, cXObject *pParent, int nSlot)     // virtual
@@ -417,7 +566,7 @@ namespace ga
     class cXPerson : public cXObject
     {
     public:
-        union { GA_AP(0x590, short, m_PersonData, 256) GA_FP(0x604, short, m_nAge) };
+        union { GA_AP(GA_O(0x590, 0x58C), short, m_PersonData, 256) GA_FP(GA_O(0x604, 0x600), short, m_nAge) };
         bool IsChild() const { return m_nAge && m_nAge < 18; }          // header inline (0x4b92c0)
         SAnimator *GetSAnimator() { return ThisCall<SAnimator *>(A::cXPerson__GetSAnimator, this); }
         bool GosubObjectTree(cXObject *pObj, short *pParams, short nTree, bool b)
@@ -436,7 +585,7 @@ namespace ga
     class ObjectModule
     {
     public:
-        union { GA_F(0x18, std::vector<cXObject *>, m_Objects) };
+        union { GA_F(0x18, GVec<cXObject *>, m_Objects) };
         cXObject *GetObject(int nId)                    // header inline in the exe
         {
             return nId > 0 && (unsigned)nId < m_Objects.size() + 1 ? m_Objects[nId - 1] : 0;
@@ -483,7 +632,7 @@ namespace ga
     };
     struct DressingRecord                               // 52 bytes
     {
-        union { GA_F0(void *, m_pBinding) GA_F(0x04, std::string, m_Suit) GA_F(0x1C, std::string, m_Skin) };
+        union { GA_F0(void *, m_pBinding) GA_F(0x04, GameString, m_Suit) GA_F(GA_O(0x1C, 0x10), GameString, m_Skin) };
         bool Redress(VBAnimMgr *pMgr, Skeleton *pSkel, CTGString *pSuit, CTGString *pSkin)
         {
             return ThisCall<bool>(A::DressingRecord__Redress, this, pMgr, pSkel, pSuit, pSkin);
@@ -494,8 +643,9 @@ namespace ga
     public:
         union
         {
-            GA_F(0x008, VitaBoy *, m_pAnimObject) GA_F(0x144, cXPerson *, m_pPerson) GA_F(0x1BC, int, m_nAppliedOutfit)
-            GA_F(0x268, std::vector<DressingRecord *>, m_HandSuits)
+            GA_F(0x008, VitaBoy *, m_pAnimObject) GA_F(GA_O(0x144, 0x138), cXPerson *, m_pPerson)
+            GA_F(GA_O(0x1BC, 0x1B0), int, m_nAppliedOutfit)
+            GA_F(GA_O(0x268, 0x25C), GVec<DressingRecord *>, m_HandSuits)
         };
         VitaBoy *GetAnimationObject() { return VCall<VitaBoy *>(this, 43); }
         void Dress(CTGString *pSuit, CTGString *pSkin) { ThisCall<void>(A::SAnimator__Dress, this, pSuit, pSkin); }
@@ -517,7 +667,7 @@ namespace ga
         StackString<64> *GetSuit(int i) { return ThisCall<StackString<64> *>(A::EditPerson__GetSuit, this, i); }
         int GetSuitCount()                              // inlined in the exe (2003: 0x409291)
         {
-            std::vector<StackString<64>> &names = Global<std::vector<StackString<64>>>(A::g_SuitNames);
+            GVec<StackString<64>> &names = Global<GVec<StackString<64>>>(A::g_SuitNames);
             if (names.begin() == names.end())
                 GetSuit(0);
             return (int)names.size();
@@ -531,7 +681,7 @@ namespace ga
         union
         {
             GA_F0(short, Hour) GA_F(0x08, short, TimeOfDay) GA_F(0x0A, short, Minute) GA_F(0x14, short, CurrentHouse)
-            GA_F(0x38, short, DaysRunning) GA_A0(short, a, 64)
+            GA_F(0x28, short, GameEdition) GA_F(0x38, short, DaysRunning) GA_A0(short, a, 64)
         };
     };
     static_assert(offsetof(SimGlobals, DaysRunning) == 2 * 28, "DaysRunning is global 28");
@@ -542,7 +692,16 @@ namespace ga
         union { GA_F(0x10, SimGlobals, m_Globals) GA_F(0xB0, ObjectModule *, m_pObjectModule) };
         void SetGlobal(short n, short v) { ThisCall<void>(A::cSimulator__SetGlobal, this, (int)n, (int)v); }
         bool IsPaused() { return ThisCall<bool>(A::cSimulator__IsPaused, this); }
+#if GAME_CC
+        // not in the 2003 exe: 42 / the tick period of the speed (cSimulator::SetSpeed's formula), as the Legacy one
+        float GetSimRate()
+        {
+            int nSpeed = m_Globals.a[16];               // global Speed
+            return 42.0f / (float)(unsigned long)(__int64)(172.0f - nSpeed / 1000.0f * 171.0f + 0.5);
+        }
+#else
         float GetSimRate() { return ThisCall<float>(A::cSimulator__GetSimRate, this); }
+#endif
     };
 
     class cSoundPlayer
@@ -561,7 +720,7 @@ namespace ga
         {
             GA_F0(House *, m_pGame) GA_F(0x04, HouseViewer *, m_pHouseViewer) GA_F(0x10, cSoundPlayer *, m_pSoundSys)
             GA_F(0x1C, cSimulator *, m_pSimulator) GA_F(0x20, cTerrain *, m_pTerrain) GA_F(0x24, Neighborhood *, m_pNeighborhood)
-            GA_F(0x6A, short, m_nExpansionMask)
+            GA_F(GA_O(0x68, 0x64), signed char, m_nCurrentLanguage) GA_F(GA_O(0x6A, 0x66), short, m_nExpansionMask)
         };
     };
     enum { kEP_Vacation = 0x8, kEP_MakinMagic = 0x80 };
@@ -581,7 +740,12 @@ namespace ga
     inline cFixedWorld *Lot() { return Global<cFixedWorld *>(A::g_pLot); }        // cRotatableWorld
     inline cFixedWorld *World() { return Global<cFixedWorld *>(A::g_pWorld); }
     inline TileRotateEntry (&TileRotateLUT())[3][64][64] { return Global<TileRotateEntry[3][64][64]>(A::g_TileRotateLUT); }
+#if GAME_CC
+    // inlined at its callers in the 2003 exe (Globs::m_nCurrentLanguage, as Legacy's GetLanguage reads it)
+    inline char GetLanguage() { return Settings()->m_nCurrentLanguage; }
+#else
     inline char GetLanguage() { return Call<char>(A::GetLanguage); }       // 1 English .. 20 (see visit_lots -lang)
+#endif
     enum { kLang_French = 3, kLang_German = 4, kLang_Italian = 5, kLang_Spanish = 6, kLang_Dutch = 7, kLang_Polish = 16 };
     inline short GlobalDispatch(short nCmd, long nParam) { return Call<short>(A::GlobalDispatch, (int)nCmd, nParam); }
     inline unsigned SimRand() { return Call<unsigned>(A::SimRand); }

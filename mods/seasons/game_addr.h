@@ -14,6 +14,8 @@
 #pragma once
 
 // ---- functions the mod wraps (detoured at their entry) ----
+// the game edition the objects see (global GameEdition)
+GA_FN(cSimulator__Init,                             0x556f20)
 // seasonal ground and weather
 GA_FN(cTerrain__SetColor,                           0x578790)
 GA_FN(cColorSwatch__PreCompute,                     0x6657d0)

@@ -10,7 +10,8 @@
 // name (EN, PL, DE, FR, ES, IT, NL; English otherwise). A click shows the calendar.
 //
 // The icon window is a cTSWin built by the exe's own constructor; its vtable is a copy of cTSWin's with TSPaint and
-// TSOnMouseDownL replaced, and the icon's state follows the cTSWin part in the same block.
+// TSOnMouseDownL replaced, and the icon's state follows the cTSWin part in the same block. 2003: the panel paints in
+// software, so the icon's coverage is blended in the text green straight into the panel's 16-bit buffer.
 #include <windows.h>
 #include <math.h>
 #include <stdio.h>
@@ -18,7 +19,7 @@
 #include "Seasons.h"
 #include "SeasonsHooks.h"
 
-// ---- the game's window classes (cTSWin 296 bytes, its vtable 98 slots) -----------------------------------------------
+// ---- the game's window classes (cTSWin 296 bytes, its vtable 98 slots; 2003: 212 bytes, 103 slots) -------------------
 
 namespace ga
 {
@@ -32,13 +33,17 @@ namespace ga
     class cTSWin
     {
     public:
-        enum { kSize = 0x128, kSlotCount = 98, kSlotChildAdd = 8, kSlotSetArea = 24, kSlotGetFlag = 35, kSlotShowWindow = 37,
-               kSlotHideWindow = 38, kSlotTSOnMouseDownL = 55, kSlotTSPaint = 87, kSlotInvalidateSelf = 88 };
+        enum { kSize = GA_O(0x128, 0xD4), kSlotCount = GA_O(98, 103), kSlotChildAdd = 8, kSlotSetArea = 24, kSlotGetFlag = 35,
+               kSlotShowWindow = 37, kSlotHideWindow = 38, kSlotTSOnMouseDownL = GA_O(55, 57), kSlotTSPaint = GA_O(87, 89),
+               kSlotInvalidateSelf = GA_O(88, 90) };
         enum { kWinFlag_Visible = 0x1 };
         union
         {
             GA_F0(void **, m_vptr) GA_F(0x08, unsigned long, m_nWinId) GA_F(0x1C, cTSRect, m_rcDraw)
-            GA_F(0x50, std::string, m_strCaption) GA_F(0xD4, cTSRect, m_rcArea)
+            GA_F(GA_O(0x50, 0x4C), GameString, m_strCaption) GA_F(GA_O(0xD4, 0x7C), cTSRect, m_rcArea)
+#if GAME_CC
+            GA_F(0x5C, cTSBuffer *, m_pBuffer)          // 2003: the buffer the window paints into
+#endif
         };
         cTSWin() = delete;
         cTSWin *GetChildWindowFromID(unsigned long n) { return ThisCall<cTSWin *>(A::cTSWin__GetChildWindowFromID, this, n); }
@@ -49,7 +54,11 @@ namespace ga
         void HideWindow() { VCall<void>(this, kSlotHideWindow); }
         void InvalidateSelf() { VCall<void>(this, kSlotInvalidateSelf); }
         void SetToolTipsText(const cTSString &s) { ThisCall<void>(A::cTSWin__SetToolTipsText, this, &s); }
+#if GAME_CC
+        void TSWinMoveTo(const cTSPoint &pt) { ThisCall<void>(A::cTSWin__TSWinMoveTo, this, pt); }   // 2003: by value
+#else
         void TSWinMoveTo(const cTSPoint &pt) { ThisCall<void>(A::cTSWin__TSWinMoveTo, this, &pt); }
+#endif
     };
     class cTSWinBtn : public cTSWin
     {
@@ -182,6 +191,62 @@ static void PaintSeasonIcon(int nSeason, unsigned int *pOut, int nStride)
         }
 }
 
+#if GAME_CC
+// ---- 2003: the icons' coverage (0..255 per pixel), blended in the text green into the panel buffer ----------------
+static unsigned char g_aSeasonIconCover[kSeasonCount][kSeasonIconSize * kSeasonIconSize];
+static bool g_bSeasonIconCoverBuilt;
+
+static const unsigned char *SeasonIconCover(int nSeason)
+{
+    if (!g_bSeasonIconCoverBuilt)
+    {
+        g_bSeasonIconCoverBuilt = true;
+        static unsigned int s_aPixels[kSeasonIconSize * kSeasonIconSize];
+        for (int n = 0; n < kSeasonCount; n++)
+        {
+            PaintSeasonIcon(n, s_aPixels, kSeasonIconSize);
+            for (int i = 0; i < kSeasonIconSize * kSeasonIconSize; i++)
+                g_aSeasonIconCover[n][i] = (unsigned char)(s_aPixels[i] >> 24);
+        }
+    }
+    return g_aSeasonIconCover[nSeason];
+}
+
+static void BlendSeasonIcon(cTSBuffer *pBuf, int nSeason, long nLeft, long nTop)
+{
+    if (!pBuf || !pBuf->Lock(kTSLockPixels))
+        return;
+    unsigned short *pBits = (unsigned short *)pBuf->GetBits();
+    int nPitch = pBuf->GetPitch() / 2;
+    bool b565 = pBuf->Is565();
+    const unsigned char *pCover = SeasonIconCover(nSeason);
+    int r = (int)(kIconTextR * 255.0f + 0.5f), g = (int)(kIconTextG * 255.0f + 0.5f), b = (int)(kIconTextB * 255.0f + 0.5f);
+    for (int y = 0; pBits && y < kSeasonIconSize; y++)
+        for (int x = 0; x < kSeasonIconSize; x++)
+        {
+            long px = nLeft + x, py = nTop + y;
+            int a = pCover[y * kSeasonIconSize + x];
+            if (!a || px < 0 || py < 0 || px >= pBuf->m_rcBounds.right || py >= pBuf->m_rcBounds.bottom)
+                continue;
+            a += a >> 7;                                // 0..256
+            unsigned short *p = pBits + py * nPitch + px;
+            int pr, pg, pb;
+            if (b565)
+            {
+                pr = (*p >> 11) & 31; pg = (*p >> 5) & 63; pb = *p & 31;
+                pr += (((r >> 3) - pr) * a) >> 8; pg += (((g >> 2) - pg) * a) >> 8; pb += (((b >> 3) - pb) * a) >> 8;
+                *p = (unsigned short)((pr << 11) | (pg << 5) | pb);
+            }
+            else
+            {
+                pr = (*p >> 10) & 31; pg = (*p >> 5) & 31; pb = *p & 31;
+                pr += (((r >> 3) - pr) * a) >> 8; pg += (((g >> 3) - pg) * a) >> 8; pb += (((b >> 3) - pb) * a) >> 8;
+                *p = (unsigned short)((pr << 10) | (pg << 5) | pb);
+            }
+        }
+    pBuf->Unlock(kTSLockPixels);
+}
+#else
 // ---- the strip texture: the four icons side by side, in eSeason order ------------------------------------------------
 
 static cTSBufferRef *g_phSeasonIcons;
@@ -211,6 +276,7 @@ static ImageRes *SeasonIconStrip()
     }
     return g_phSeasonIcons ? g_phSeasonIcons->Get() : 0;
 }
+#endif
 
 // ---- the localised season names (tooltip), in each language's code page ---------------------------------------------
 
@@ -268,6 +334,10 @@ static bool __fastcall Icon_TSPaint(cTSWin *pWin, void *, bool)
     int nSeason = IconState(pWin).m_nSeason;
     if (nSeason < 0)
         return true;
+#if GAME_CC
+    BlendSeasonIcon(pWin->m_pBuffer, nSeason, pWin->m_rcDraw.left, pWin->m_rcDraw.top);
+    return true;
+#else
     ImageRes *pStrip = SeasonIconStrip();
     if (!pStrip || !pStrip->m_Tex.m_hSet)
         return true;
@@ -280,6 +350,7 @@ static bool __fastcall Icon_TSPaint(cTSWin *pWin, void *, bool)
     unsigned __int64 hSet = pStrip->m_Tex.m_hSet;
     canvas.DrawTexturedQuad2(hSet, tl, br, 0.0f, uvTL, uvBR, 0xFFFFFFFFu);
     return true;
+#endif
 }
 
 // a new icon window: cTSWin's constructor, then our vtable (cTSWin's, with TSPaint and TSOnMouseDownL replaced; the
@@ -287,7 +358,14 @@ static bool __fastcall Icon_TSPaint(cTSWin *pWin, void *, bool)
 static void *s_aIconVtbl[1 + cTSWin::kSlotCount];
 static cTSWin *NewIconWin()
 {
+#if GAME_CC
+    // the panel deletes its children: the exe's heap
+    void *p = Call<void *>(A::operator_new, cTSWin::kSize + sizeof(SeasonIconState));
+    if (!p)
+        return 0;
+#else
     void *p = operator new(cTSWin::kSize + sizeof(SeasonIconState));
+#endif
     ThisCall<void>(A::cTSWin__cTSWin, p);
     cTSWin *pWin = (cTSWin *)p;
     if (!s_aIconVtbl[1])
@@ -309,6 +387,8 @@ void Seasons_PanelIconInit(cTSWin *pPanel, cTSWinBtn *pFunds, cTSWinBtn *pFriend
     if (!pPanel || !pFunds || !pFriends || pPanel->GetChildWindowFromID(kSeasonIconWinId))
         return;
     cTSWin *pIcon = NewIconWin();
+    if (!pIcon)
+        return;
     SeasonIconState &s = IconState(pIcon);
     pIcon->m_nWinId = kSeasonIconWinId;
     s.m_ptFunds = cTSPoint{ pFunds->m_rcArea.left, pFunds->m_rcArea.top };
@@ -316,6 +396,9 @@ void Seasons_PanelIconInit(cTSWin *pPanel, cTSWinBtn *pFunds, cTSWinBtn *pFriend
     s.m_nShift = kSeasonIconSize + kSeasonIconGap;
     // vertically: centred on the digits ('0' glyph box of the caption font; the cell when the font gives no offset)
     long nTop = pFunds->m_rcArea.top, nBottom = pFunds->m_rcArea.bottom;
+    // 2003: no glyph-box query on the caption font (its GetCharDims is not used on the 2003 fonts, where it was seen
+    // to corrupt the heap); the icon is centred on the funds button's cell
+#if !GAME_CC
     if (cITSFont *pFont = pFunds->GetFont())
     {
         cTSRect rc = {};
@@ -326,6 +409,7 @@ void Seasons_PanelIconInit(cTSWin *pPanel, cTSWinBtn *pFunds, cTSWinBtn *pFriend
             nBottom = pFunds->m_rcArea.top + rc.bottom;
         }
     }
+#endif
     long nIconTop = (nTop + nBottom - kSeasonIconSize) / 2;
     if (nIconTop < pFunds->m_rcArea.top)
         nIconTop = pFunds->m_rcArea.top;
@@ -474,7 +558,9 @@ static void ShowSeasonCalendar()
 class cWinViewControl
 {
 public:
-#if GAME_EA
+#if GAME_CC
+    union { GA_F(0x108, cTSWinBtn *, m_pFundsBtn) GA_F(0x1D0, cTSWinBtn *, m_pFriendCountBtn) };
+#elif GAME_EA
     // the EA app build lays this class out 12 bytes shorter from +0x138 on (its Init stores the funds button at +0x15c
     // and the friend count at +0x250)
     union { GA_F(0x15C, cTSWinBtn *, m_pFundsBtn) GA_F(0x250, cTSWinBtn *, m_pFriendCountBtn) };
@@ -494,6 +580,16 @@ static bool __fastcall W_ViewControlInit(cWinViewControl *p, void *)
     return r;
 }
 
+#if GAME_CC
+// cWinViewControl::UpdateViewFromCPState (at its end): show / hide / change the season icon (2003: no other mod hooks
+// this function; its entry is wrapped)
+ORIG(UpdateViewFromCPState, void(__thiscall *)(cWinViewControl *, void *));
+static void __fastcall W_UpdateViewFromCPState(cWinViewControl *p, void *, void *pState)
+{
+    o_UpdateViewFromCPState(p, pState);
+    Seasons_PanelIconUpdate((cTSWin *)p, p->m_pFundsBtn, p->m_pFriendCountBtn);
+}
+#else
 // cWinViewControl::UpdateViewFromCPState (at its end): show / hide / change the season icon. Its entry is left alone
 // (4 Stories detours it); both epilogues jump here.
 static void __cdecl Q_UpdateViewEnd(cWinViewControl *p)
@@ -517,10 +613,15 @@ __declspec(naked) static void S_UpdateViewEnd()
         ret 4
     }
 }
+#endif
 
 const Hook g_PanelHooks[] = {
     WRAP(cWinViewControl__Init,                     W_ViewControlInit, o_ViewControlInit),
+#if GAME_CC
+    WRAP(cWinViewControl__UpdateViewFromCPState,    W_UpdateViewFromCPState, o_UpdateViewFromCPState),
+#else
     JMP_STUB(UV_Tail1,                              S_UpdateViewEnd),
     JMP_STUB(UV_Tail2,                              S_UpdateViewEnd),
+#endif
 };
 const size_t g_nPanelHooks = sizeof g_PanelHooks / sizeof g_PanelHooks[0];

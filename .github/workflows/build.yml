@@ -84,7 +84,7 @@ jobs:
         shell: pwsh
         run: |
           python package.py
-          Get-FileHash dist\*.zip, modloader\build\winmm.dll, mods\visit_lots\build\visit_lots_steam.dll, mods\multistory\build\multistory_steam.dll, mods\eyedropper\build\eyedropper_steam.dll, mods\seasons\build\seasons_steam.dll, mods\seasons\build\ea\seasons_ea.dll -Algorithm SHA256 |
+          Get-FileHash dist\*.zip, modloader\build\winmm.dll, mods\visit_lots\build\visit_lots_steam.dll, mods\multistory\build\multistory_steam.dll, mods\eyedropper\build\eyedropper_steam.dll, mods\seasons\build\seasons_steam.dll, mods\seasons\build\ea\seasons_ea.dll, mods\seasons\build\cc\seasons_cc.dll -Algorithm SHA256 |
             Format-Table Hash, Path -AutoSize | Out-String -Width 300
 
       - uses: actions/upload-artifact@v4

@@ -66,7 +66,15 @@ void Seasons_TerrainCornerColors(const float *pPos, const unsigned char *pLightI
 void Seasons_TerrainDetailAlpha(const float *pPos, float *pAlpha);
 
 // weather overlay, drawn into the current pass inside the view rectangle (also advances the season / weather state)
+#if GAME_CC
+// 2003: drawn in software into the lot view's 16-bit buffer (HouseViewer's view buffer and view rect when it has them,
+// else pViewBuf / the given rect). Seasons_PrePaint runs before the scene is drawn and damages the whole view while the
+// overlay shows (the 2003 view only redraws damaged rectangles).
+void Seasons_PrePaint();
+void Seasons_PaintOverlay(cTSBuffer *pViewBuf, int nLeft, int nTop, int nRight, int nBottom);
+#else
 void Seasons_PaintOverlay(int nLeft, int nTop, int nRight, int nBottom);
+#endif
 
 // find_location_for modes 7..10 (snow): true when the mode is one of them (*pnResult set)
 bool Seasons_FindGoodLocation(cXObject *pThis, StackElem *pFrame, BehaviorNodeParam *pParams, int *pnResult);

@@ -2,6 +2,7 @@
 // official packs with its own source category, and its objects count as downloads for the sound / skin / texture /
 // animation search paths.
 #include <windows.h>
+#include <stdio.h>
 #include <string.h>
 #include <vector>
 #include <unordered_map>
@@ -9,12 +10,12 @@
 #include "SeasonsHooks.h"
 
 enum { kSourceSeasonsEp8 = 4096 };
-enum { kCmdObjectFolderChanged = 223 };
+enum { kCmdObjectFolderChanged = GA_O(223, 224) };     // the command ScanForNewFiles sends when it found objects
 
 class ObjectFolder
 {
 public:
-    union { GA_F(0x14, bool, m_bFlag14) GA_F(0x20, std::vector<ObjSelector *>, m_Selectors) };
+    union { GA_F(0x14, bool, m_bFlag14) GA_F(0x20, GVec<ObjSelector *>, m_Selectors) };
     ObjectFolder() = delete;
     void ScanDirectory(StringBuffer *pPath, int nSourceCategory) { ThisCall<void>(A::ObjectFolder__ScanDirectory, this, pPath, nSourceCategory); }
     void AddAllSelectors(const StackString<260> &path, int nSourceCategory) { ThisCall<void>(A::ObjectFolder__AddAllSelectors, this, &path, nSourceCategory); }
@@ -124,15 +125,47 @@ static void __fastcall W_NewFileAdded(ObjectFolder *f, void *, StackString<260> 
 
 // ObjectFolder::GetDownloadDirectories: Seasons objects count as downloads here, so their folders join the sound,
 // skin, texture and animation search paths like Downloads (same walk as the original, for our objects)
-ORIG(GetDownloadDirectories, void(__thiscall *)(ObjectFolder *, std::vector<StackString<260>> *));
-static void __fastcall W_GetDownloadDirectories(ObjectFolder *f, void *, std::vector<StackString<260>> *pDirs)
+#if GAME_CC
+// 2003: the animation manager loads every .cmx of a download folder through the file manager, which lists the entries
+// of a mapped .far too, but it cannot open an animation stored in a .far (it gets no stream and crashes). So a Seasons
+// folder joins the search paths only when its objects are loose files and no .far lies in it; packed Seasons content
+// keeps its objects (the object scan reads .far files) but not its animations / skins, and the log says so.
+static bool LooseAnimationDir(const StackString<260> &filePath, const StackString<260> &dir)
+{
+    DWORD nAttr = GetFileAttributesA(filePath.c_str());
+    bool bLoose = nAttr != INVALID_FILE_ATTRIBUTES && !(nAttr & FILE_ATTRIBUTE_DIRECTORY);
+    if (bLoose)
+    {
+        char szPattern[MAX_PATH + 8];
+        sprintf_s(szPattern, "%s*.far", dir.c_str());
+        WIN32_FIND_DATAA fd;
+        HANDLE h = FindFirstFileA(szPattern, &fd);
+        if (h != INVALID_HANDLE_VALUE)
+        {
+            FindClose(h);
+            bLoose = false;
+        }
+    }
+    static bool s_bLogged;
+    if (!bLoose && !s_bLogged)
+    {
+        s_bLogged = true;
+        Seasons_Log("%s: packed in a .far, which this game cannot load animations from: not an animation / skin folder "
+                    "(unpack the Seasons content for raincoats, umbrellas and object animations)", dir.c_str());
+    }
+    return bLoose;
+}
+#endif
+
+ORIG(GetDownloadDirectories,void(__thiscall *)(ObjectFolder *, GVec<StackString<260>> *));
+static void __fastcall W_GetDownloadDirectories(ObjectFolder *f, void *, GVec<StackString<260>> *pDirs)
 {
     o_GetDownloadDirectories(f, pDirs);
-    std::vector<ObjSelector *> &sel = f->m_Selectors;
-    std::vector<StackString<260>> &dirs = *pDirs;
-    for (std::vector<ObjSelector *>::iterator it = sel.begin(); it != sel.end(); ++it)
+    GVec<ObjSelector *> &sel = f->m_Selectors;
+    GVec<StackString<260>> &dirs = *pDirs;
+    for (auto it = sel.begin(); it != sel.end(); ++it)
     {
-        std::vector<ObjSelector *>::iterator itNext = it + 1;
+        auto itNext = it + 1;
         if (SelectorSourceCategory(*it) != kSourceSeasonsEp8 || (*it)->Kind() == 2)
             continue;                                   // not ours, or the original took it already
         if (itNext != sel.end() && (*itNext)->m_pResFile == (*it)->m_pResFile)
@@ -141,12 +174,20 @@ static void __fastcall W_GetDownloadDirectories(ObjectFolder *f, void *, std::ve
         StackString<260> dir;
         (*it)->m_pResFile->GetFileName(filePath);
         ExtractDirectory(filePath, dir);
-        std::vector<StackString<260>>::iterator itDir;
-        for (itDir = dirs.begin(); itDir != dirs.end(); ++itDir)
+        auto itDir = dirs.begin();
+        for (; itDir != dirs.end(); ++itDir)
             if (!itDir->compareNoCase(dir))
                 break;
         if (itDir == dirs.end())
+#if GAME_CC
+        {
+            if (!LooseAnimationDir(filePath, dir))
+                continue;
+            dirs.PushBack(A::PathVec__push_back, dir);  // the game's vector: grown by the exe's own push_back
+        }
+#else
             dirs.push_back(dir);
+#endif
     }
 }
 

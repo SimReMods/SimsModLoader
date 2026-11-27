@@ -18,10 +18,15 @@ installer, which downloads this mod's release zip (`sims-seasons-DO-NOT-DOWNLOAD
 - `SeasonsCareers.cpp` - the extra careers, their job panel art and at-work portraits.
 - `SeasonsFolder.cpp` - the `ExpansionPack8` objects folder.
 - `SeasonsPanelIcon.cpp` - the season icon and calendar.
-- `game_api.h` - the game classes, fields and functions the mod uses; `game_addr.h` / `game_addr_ea.h` - the Steam / EA
-  app addresses; `gen_sigs.h` / `gen_sigs_ea.h` - the signatures of the patched places.
+- `game_api.h` - the game classes, fields and functions the mod uses; `game_addr.h` / `game_addr_ea.h` /
+  `game_addr_cc.h` - the Steam / EA app / Complete Collection addresses; `gen_sigs*.h` - the signatures of the patched
+  places.
+
+On the Complete Collection (2003) the weather is drawn in software into the lot view, the ground frosts evenly (no
+per-corner snow or grass-blade fade, which only the Legacy 3D terrain has), and the Seasons content must be unpacked
+(loose files, no `.far`) for raincoats, umbrellas and object animations.
 
 ## Build
 
 Open "x86 Native Tools Command Prompt for VS 2022" and run `build.bat`. Output: `build\seasons_steam.dll` (Steam) and
-`build\ea\seasons_ea.dll` (EA app).
+`build\ea\seasons_ea.dll` (EA app) and `build\cc\seasons_cc.dll` (The Sims Complete Collection, 2003).

@@ -20,7 +20,7 @@ PACKAGES = {
     'multistory': ('multistory', 'multistory_steam.dll', 'README-MULTISTORY.txt'),
     'eyedropper': ('eyedropper', 'eyedropper_steam.dll', 'README-EYEDROPPER.txt'),
     # the Seasons installer (github.com/SimReMods/Seasons) downloads this one; players install that, not this zip
-    'seasons-DO-NOT-DOWNLOAD': ('seasons', ['seasons_steam.dll', 'ea/seasons_ea.dll'], 'README-SEASONS.txt'),
+    'seasons-DO-NOT-DOWNLOAD': ('seasons', ['seasons_steam.dll', 'ea/seasons_ea.dll', 'cc/seasons_cc.dll'], 'README-SEASONS.txt'),
 }
 
 

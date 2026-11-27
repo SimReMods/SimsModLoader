@@ -1,6 +1,6 @@
-// seasons.cpp - mods\seasons_steam.dll: the engine side of "Seasons", the unofficial expansion (seasons, weather, the
-// season icon, raincoats and umbrellas, dressing at the door, snow locations, the ExpansionPack8 objects folder and the
-// extra careers), as a patch mod.
+// seasons.cpp - mods\seasons_steam.dll (seasons_cc.dll for the 2003 Complete Collection): the engine side of
+// "Seasons", the unofficial expansion (seasons, weather, the season icon, raincoats and umbrellas, dressing at the door,
+// snow locations, the ExpansionPack8 objects folder and the extra careers), as a patch mod.
 //
 // Every original function keeps running as the exe's own code. The mod changes it in one of three ways:
 //   wrapper  - the function's entry is detoured to a W_* function, which runs the feature's part before and / or after
@@ -20,13 +20,16 @@
 #include "simsmod.h"
 #include "Seasons.h"
 #include "SeasonsHooks.h"
-#if GAME_EA
+#if GAME_CC
+#include "gen_sigs_cc.h"
+#elif GAME_EA
 #include "gen_sigs_ea.h"
 #else
 #include "gen_sigs.h"
 #endif
 
-extern "C" __declspec(dllexport) const unsigned SimsMod_Games = GAME_EA ? SIMSMOD_GAME_LEGACY_EA : SIMSMOD_GAME_LEGACY;
+extern "C" __declspec(dllexport) const unsigned SimsMod_Games =
+    GAME_CC ? SIMSMOD_GAME_COMPLETE : GAME_EA ? SIMSMOD_GAME_LEGACY_EA : SIMSMOD_GAME_LEGACY;
 
 unsigned ga::g_exeBase;
 static const SimsLoaderApi *s_api;
@@ -43,6 +46,7 @@ void Seasons_Log(const char *fmt, ...)
     s_api->Log("[seasons] %s", sz);
 }
 
+#if !GAME_CC
 // ---- one heap with the exe ---------------------------------------------------------------------------------------
 // operator new / delete are the exe's (game_addr.h OperatorNew / OperatorDelete), so a block this DLL allocates can be freed by
 // the game and the other way round: game vectors grown here, careers created here and deleted by LoadCareers. Looked up
@@ -64,6 +68,20 @@ void *operator new(size_t n, const std::nothrow_t &) noexcept
 {
     try { return operator new(n); } catch (...) { return 0; }
 }
+#endif
+// 2003: the exe's STL and allocator are not this DLL's (game_api.h), so the DLL keeps its own heap; what the game frees
+// is allocated with the exe's own operator new / push_back / string functions where it is created.
+
+// ---- the game edition ---------------------------------------------------------------------------------------------
+
+// cSimulator::Init sets global GameEdition from the installed packs; Seasons adds its bit after Makin' Magic's (0x80),
+// in every version, so objects can test for it. A lot load keeps the value.
+ORIG(SimulatorInit, void(__thiscall *)(cSimulator *, ObjectModule *));
+static void __fastcall W_SimulatorInit(cSimulator *s, void *, ObjectModule *pModule)
+{
+    o_SimulatorInit(s, pModule);
+    s->m_Globals.GameEdition |= 0x100;
+}
 
 // ---- the seasonal ground -----------------------------------------------------------------------------------------
 
@@ -82,15 +100,22 @@ public:
     union
     {
         GA_A(0x20, int, m_aShadeOffsets, 4) GA_F(0x4C, int, m_nShadeCount) GA_F(0x70, WideColorChunk **, m_ppColorTableRows)
+#if GAME_CC
+        GA_F(0x7C, int, fNumColors)                     // 2003: no atlas, no tile mesh scratch before it
+#else
         GA_A(0x7C, cTSBufferRef, m_Atlas, 5) GA_F(0x3E8, int, fNumColors) GA_F(0x438, int, m_nQualityLevel)
+#endif
     };
     cColorSwatch() = delete;
 };
+#if !GAME_CC
 struct TextureAtlasSet { cTSBufferRef m_h[5]; };
+#endif
 
 // cColorSwatch::PreCompute: with the seasonal palette on, every colour row is built again from Seasons_GetPaletteRow's
 // light / dark pair (the original loop's BuildRamp call) and the atlas again from the new rows (the original's last
-// statement). Off: nothing, the original result stands.
+// statement). Off: nothing, the original result stands. 2003: the software terrain fill reads the colour rows
+// directly, there is no atlas to rebuild.
 ORIG(PreCompute, void(__thiscall *)(cColorSwatch *));
 static void __fastcall W_PreCompute(cColorSwatch *s, void *)
 {
@@ -106,6 +131,7 @@ static void __fastcall W_PreCompute(cColorSwatch *s, void *)
                    s->m_aShadeOffsets, false);
         bChanged = true;
     }
+#if !GAME_CC
     if (bChanged)
     {
         const int *pZoom = &Global<int>(A::g_SwatchParamsActive);
@@ -115,6 +141,9 @@ static void __fastcall W_PreCompute(cColorSwatch *s, void *)
         for (int i = 0; i < 5; i++)
             s->m_Atlas[i] = std::move(atlas.m_h[i]);
     }
+#else
+    (void)bChanged;
+#endif
 }
 
 // cColorSwatch::ComputeMeshPointColorIndex: the grass colour row of a mesh corner, remapped for the season
@@ -125,6 +154,9 @@ static int __fastcall W_ComputeMeshPointColorIndex(cColorSwatch *s, void *, sign
     return Seasons_AdjustColorIndex(x, y, n, s->fNumColors);
 }
 
+#if !GAME_CC
+// The snow per terrain corner (vertex colours of the tile mesh, grass blades under snow) is the Legacy renderer's: the
+// 2003 terrain is a software fill from the colour rows, where the frost of Seasons_GetPaletteRow is the snow.
 struct TerrainVertex { float x, y, z; unsigned int nColor; float m_field_10; };
 class TerrainTileScratch
 {
@@ -157,21 +189,36 @@ static void __fastcall C_EmitQuad(TerrainTileScratch *t, void *, RenderParam *pP
         t->m_TerrainVerts[i].nColor = aColor[i];
     ThisCall<void>(A::TerrainTileScratch__EmitQuad, t, pParam, nRot);
 }
+#endif
 
 // cDDDSimsView::TSPaint: when this call draws the scene (m_bInDraw clear), the rain / snow overlay over the view after
-// it (Draw is inlined into TSPaint, so the overlay also covers the edge-scroll image and the pause text)
+// it (Draw is inlined into TSPaint, so the overlay also covers the edge-scroll image and the pause text). 2003: the
+// view redraws only damaged rectangles, so before the scene is drawn the whole view is damaged while the overlay shows
+// (Seasons_PrePaint), and the overlay is then blended into the buffer the scene was drawn into.
 class cDDDSimsView
 {
 public:
+#if GAME_CC
+    union { GA_F(0x1C, cTSRect, m_rcDraw) GA_F(0x5C, cTSBuffer *, m_pBuffer) GA_F(0x11A, bool, m_bInDraw) };
+#else
     union { GA_F(0x1C, cTSRect, m_rcDraw) GA_F(0x162, bool, m_bInDraw) };
+#endif
 };
 ORIG(TSPaint, bool(__thiscall *)(cDDDSimsView *, bool));
 static bool __fastcall W_TSPaint(cDDDSimsView *v, void *, bool bParentPainted)
 {
     bool bDraws = !v->m_bInDraw;
+#if GAME_CC
+    if (bDraws)
+        Seasons_PrePaint();
+#endif
     bool r = o_TSPaint(v, bParentPainted);
     if (bDraws)
+#if GAME_CC
+        Seasons_PaintOverlay(v->m_pBuffer, v->m_rcDraw.left, v->m_rcDraw.top, v->m_rcDraw.right, v->m_rcDraw.bottom);
+#else
         Seasons_PaintOverlay(v->m_rcDraw.left, v->m_rcDraw.top, v->m_rcDraw.right, v->m_rcDraw.bottom);
+#endif
     return r;
 }
 
@@ -253,6 +300,35 @@ static bool __cdecl Q_DoorDress(cXPerson *p)
     return p->GosubObjectTree(p, aParams, kGlobalTreeDressInSpecifiedOutfit, false);
 }
 static void *s_vaGrsState2Next, *s_vaGrsYield;
+#if GAME_CC
+// ASM: replaces `mov eax, [ebp-0x1c]; mov ax, [eax+0x84]` (10 bytes: the load of pStackObj and its room for the room
+// compare) in state 2, after the ShouldInterrupt test. esi = this, [ebp-0x1c] = pStackObj, [ebp-0x10] = the state
+// variable (the yield tail stores it as pFrame->m_nYieldState), [ebp-0x18] = nResult; ebx (0) and edi (the route) stay
+// live, so are kept; ecx / edx are kept too. Dressing: nResult = 3, state 2, then the yield tail (route fields written
+// back, return nResult), as the portal-route start does. Otherwise the replaced instructions, then back to the compare.
+__declspec(naked) static void S_GrsState2()
+{
+    __asm
+    {
+        push ecx
+        push edx
+        push esi
+        call Q_DoorDress
+        add esp, 4
+        pop edx
+        pop ecx
+        test al, al
+        jnz dress
+        mov eax, [ebp - 0x1c]
+        mov ax, word ptr [eax + 0x84]
+        jmp dword ptr [s_vaGrsState2Next]
+    dress:
+        mov dword ptr [ebp - 0x18], 3
+        mov dword ptr [ebp - 0x10], 2
+        jmp dword ptr [s_vaGrsYield]
+    }
+}
+#else
 // ASM: replaces `mov ecx, [ebp-0x170]` (6 bytes at 0x5f7d96, the load of pStackObj for the room compare) in state 2,
 // after the ShouldInterrupt test. edi = this, [ebp-0x178] = pFrame, [ebp-0x180] = nResult; eax / ecx / edx are dead
 // here (ecx is loaded by the replaced instruction, eax next, edx reloaded or clobbered by a call on every path).
@@ -276,6 +352,7 @@ __declspec(naked) static void S_GrsState2()
         jmp dword ptr [s_vaGrsYield]
     }
 }
+#endif
 
 // SAnimator::UpdateOutfitAndHands: outfit 61 is not in the original's outfit switch, so the original dresses a Sim in
 // it in everyday clothes. Afterwards the body slot gets the Sim's raincoat when it is not already wearing it; with no
@@ -312,7 +389,7 @@ static void __fastcall W_UpdateOutfitAndHands(SAnimator *a, void *, bool bForce)
 class cWinClothingChoiceDlg
 {
 public:
-    union { GA_F(0x130, int, m_eClothingType) };
+    union { GA_F(GA_O(0x130, 0xD8), int, m_eClothingType) };
 };
 static int s_nPendingVitaOutfit = -1;
 ORIG(ClothingDlgInit, bool(__thiscall *)(cWinClothingChoiceDlg *));
@@ -328,7 +405,11 @@ static bool __fastcall W_ClothingDlgInit(cWinClothingChoiceDlg *d, void *)
 class cWinVitaBtnSolo
 {
 public:
-    union { GA_F(0x200, cXPerson *, m_pOwner) GA_F(0x204, void *, m_pEditPerson) GA_F(0x208, int, m_nCurrentOutfit) };
+    union
+    {
+        GA_F(GA_O(0x200, 0x1A8), cXPerson *, m_pOwner) GA_F(GA_O(0x204, 0x1AC), void *, m_pEditPerson)
+        GA_F(GA_O(0x208, 0x1B0), int, m_nCurrentOutfit)
+    };
 };
 
 // SetPerson: the clothing dialog's Init passes 0 for a type the original does not know; while it runs for a raincoat /
@@ -402,9 +483,25 @@ static void __fastcall W_NextSuit(cWinVitaBtnSolo *b, void *)
 }
 
 // Neighbor::GetPersistentDataFields: the raincoat and umbrella a Sim bought are kept with the neighbour (person data
-// 240 / 241). The two ends of the path that builds the list (re-built when the persistent-data version changes) call
-// S_PdfBuilt; the cached path returns the list already extended. The entry is left alone: other mods check its bytes.
+// 240 / 241). Legacy: the two ends of the path that builds the list (re-built when the persistent-data version changes)
+// call S_PdfBuilt; the cached path returns the list already extended. 2003: the entry is wrapped.
 struct PersDataPair { int m_nField, m_nKind; };
+#if GAME_CC
+// 2003: no other mod touches this function; its entry is wrapped
+ORIG(GetPersistentDataFields, GVec<PersDataPair> *(__cdecl *)(int));
+static GVec<PersDataPair> *__cdecl W_GetPersistentDataFields(int nVersion)
+{
+    GVec<PersDataPair> *pFields = o_GetPersistentDataFields(nVersion);
+    size_t n = pFields->size();
+    if (n < 2 || (*pFields)[n - 2].m_nField != kPersonDataSeasonsRainCoat || (*pFields)[n - 1].m_nField != kPersonDataSeasonsUmbrella)
+    {
+        // the game's vector: grown by the exe's own push_back (its allocator)
+        pFields->PushBack(A::PersDataVec__push_back, { kPersonDataSeasonsRainCoat, 1 });
+        pFields->PushBack(A::PersDataVec__push_back, { kPersonDataSeasonsUmbrella, 1 });
+    }
+    return pFields;
+}
+#else
 static void __cdecl Q_AppendFields()
 {
     std::vector<PersDataPair> &fields = Global<std::vector<PersDataPair>>(A::s_PersistentFields);
@@ -434,16 +531,20 @@ __declspec(naked) static void S_PdfBuilt()
         ret
     }
 }
+#endif
 
 // ---- the hook table ------------------------------------------------------------------------------------------------
 
 static const Hook s_CoreHooks[] = {
+    WRAP(cSimulator__Init,                          W_SimulatorInit, o_SimulatorInit),
     WRAP(cTerrain__SetColor,                        W_SetColor, o_SetColor),
     WRAP(cColorSwatch__PreCompute,                  W_PreCompute, o_PreCompute),
     WRAP(cColorSwatch__ComputeMeshPointColorIndex,  W_ComputeMeshPointColorIndex, o_ComputeMeshPointColorIndex),
+#if !GAME_CC
     WRAP(TerrainTileScratch__ComputeDetailFade,     W_ComputeDetailFade, o_ComputeDetailFade),
     CALL(EA_EmitQuad1,                              C_EmitQuad),
     CALL(EA_EmitQuad2,                              C_EmitQuad),
+#endif
     WRAP(cDDDSimsView__TSPaint,                     W_TSPaint, o_TSPaint),
     WRAP(cXObject__InterpValue,                     W_InterpValue, o_InterpValue),
     WRAP(cXObject__TryFindGoodLocation,             W_TryFindGoodLocation, o_TryFindGoodLocation),
@@ -457,8 +558,12 @@ static const Hook s_CoreHooks[] = {
     WRAP(cWinVitaBtnSolo__GetCurrentSuitIndex,      W_GetCurrentSuitIndex, o_GetCurrentSuitIndex),
     WRAP(cWinVitaBtnSolo__PreviousSuit,             W_PreviousSuit, o_PreviousSuit),
     WRAP(cWinVitaBtnSolo__NextSuit,                 W_NextSuit, o_NextSuit),
+#if GAME_CC
+    WRAP(Neighbor__GetPersistentDataFields,         W_GetPersistentDataFields, o_GetPersistentDataFields),
+#else
     CALL_STUB(PDF_Built1,                           S_PdfBuilt),
     CALL_STUB(PDF_Built2,                           S_PdfBuilt),
+#endif
 };
 
 static const HookTable s_Tables[] = {
@@ -484,7 +589,9 @@ extern "C" __declspec(dllexport) int __cdecl SimsMod_Init(const SimsLoaderApi *a
     ga::g_exeBase = api->exeBase;
     s_vaGrsState2Next = Va(A::GRS_State2Next);
     s_vaGrsYield = Va(A::GRS_Yield);
+#if !GAME_CC
     s_pPersistentFieldsVersion = &Global<int>(A::s_nPersistentFieldsVersion);
+#endif
     // every site must match its signature, or nothing is patched
     int nBad = 0;
     unsigned nHooks = 0;

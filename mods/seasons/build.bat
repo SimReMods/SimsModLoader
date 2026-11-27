@@ -22,3 +22,12 @@ if not exist build\ea mkdir build\ea
 cl /nologo /Brepro /c /MT /GS /EHsc /O2 /Oy- /std:c++17 /W3 /wd4996 /wd4624 /DGAME_EA=1 /Fobuild\ea\ %SRCS% || exit /b 1
 link /nologo /Brepro /DLL /MACHINE:X86 /OPT:REF /OPT:ICF /OUT:build\ea\seasons_ea.dll %OBJS:build\=build\ea\% build\version.res kernel32.lib user32.lib || exit /b 1
 echo built build\ea\seasons_ea.dll (version %V%)
+if not exist game_addr_cc.h (
+    echo skipped build\cc\seasons_cc.dll: game_addr_cc.h not present
+    exit /b 0
+)
+if not exist build\cc mkdir build\cc
+set CCOBJS=build\cc\seasons.obj build\cc\SeasonsCore.obj build\cc\SeasonsCareers.obj build\cc\SeasonsFolder.obj build\cc\SeasonsPanelIcon.obj
+cl /nologo /Brepro /c /MT /GS /EHsc /O2 /Oy- /std:c++17 /W3 /wd4996 /wd4624 /DGAME_CC=1 /Fobuild\cc\ %SRCS% || exit /b 1
+link /nologo /Brepro /DLL /MACHINE:X86 /OPT:REF /OPT:ICF /OUT:build\cc\seasons_cc.dll %CCOBJS% build\version.res kernel32.lib user32.lib || exit /b 1
+echo built build\cc\seasons_cc.dll (version %V%)

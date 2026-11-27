@@ -23,6 +23,18 @@ public:
     void SetColor() { ThisCall<void>(A::cTerrain__SetColor, this); }
 };
 
+#if GAME_CC
+// the 2003 lot view: drawn in software into its view buffer, redrawing only the damaged rectangles of the view rect
+struct DDDDamageList
+{
+    bool Add(const cTSRect &rc) { return ThisCall<bool>(A::DDDDamageList__Add, this, &rc); }
+};
+class HouseViewer
+{
+public:
+    union { GA_F(0x28, cTSRect, m_ViewRect) GA_F(0x70, cTSBuffer *, m_pViewBuf) GA_F(0x88, DDDDamageList, m_DamageRects0) };
+};
+#else
 struct PickQuadVert { float m_fX, m_fY, m_fZ, m_Attrib[4], m_Reserved[8]; };
 static_assert(sizeof(PickQuadVert) == 60, "PickQuadVert");
 struct PickQuadRecord
@@ -56,6 +68,7 @@ class HouseViewer
 public:
     RenderContext &Context() { return *(RenderContext *)((char *)this + 0x5C4); }
 };
+#endif
 }
 
 static FTilePt PointToTile(ScreenPt16 pt)
@@ -184,7 +197,7 @@ bool Seasons_GetCalendar(SeasonsCalendar *pCal)
     cXObject *pCtl = 0;
     if (pSim->m_pObjectModule)
     {
-        std::vector<cXObject *> &objs = pSim->m_pObjectModule->m_Objects;
+        GVec<cXObject *> &objs = pSim->m_pObjectModule->m_Objects;
         for (size_t i = 0; i < objs.size(); i++)
         {
             cXObject *pObj = objs[i];
@@ -276,7 +289,7 @@ template <class F> static void ForEachTree(F fn)
     cSimulator *pSim = Sim();
     if (!pSim || !pSim->m_pObjectModule)
         return;
-    std::vector<cXObject *> &objs = pSim->m_pObjectModule->m_Objects;
+    GVec<cXObject *> &objs = pSim->m_pObjectModule->m_Objects;
     for (size_t i = 0; i < objs.size(); i++)
     {
         cXObject *pObj = objs[i];
@@ -747,8 +760,10 @@ static unsigned int g_nRand = 12345;
 static DWORD g_nLastTick;
 static int g_nViewW, g_nViewH;
 static float g_fPxScale = 1.0f;                 // particle size scale: view height / 900 (high-res windows)
+#if !GAME_CC
 static cTSBufferRef *g_phDot;                   // 32x32 white soft dot (alpha only), kept for the session
 static bool g_bDotTried;
+#endif
 static float g_fStorm;                          // eased 0..1: how much of a thunderstorm the rain is
 static float g_fStormPower;                     // 0..1: the storm's intensity (how often lightning strikes)
 
@@ -929,6 +944,7 @@ static void SpawnParticle(Particle &p, int nKind, bool bAnywhere)
     p.y = bAnywhere ? Rand01() * (float)g_nViewH : -p.fSize - Rand01() * 40.0f;
 }
 
+#if !GAME_CC
 static unsigned int s_aDotPixels[32 * 32];
 static void EnsureDot()
 {
@@ -983,7 +999,11 @@ static void WriteQuad(VertPosColorUV *v, float cx, float cy, float ax, float ay,
     }
 }
 
+#endif
+
 static float g_fScrollVelX, g_fScrollVelY;      // how fast scrolling moves the particles on screen (px/s, smoothed)
+
+#if !GAME_CC
 
 // a point of the scene's quad list (RenderContext's pick geometry): inside one of the quad's two triangles?
 static bool QuadCoversPoint(const PickQuadRecord &q, float fX, float fY)
@@ -1009,6 +1029,8 @@ static bool QuadCoversPoint(const PickQuadRecord &q, float fX, float fY)
 // does a raindrop landing at screen point (x, y) hit open ground? Outdoor tiles inside the lot (terrain, patios, paths,
 // ponds, pools) that nothing is drawn over: no splashes outside the lot, indoors, on walls / upper floors or on objects
 // / Sims standing in front of the ground there.
+#endif
+
 static bool IsGroundVisibleAt(float x, float y)
 {
     cFixedWorld *pLot = Lot();
@@ -1028,6 +1050,13 @@ static bool IsGroundVisibleAt(float x, float y)
         return false;
     if (!(LotGetFlags(view) & 4))
         return false;        // indoors (tile flag 4 = outside: grass, patios, paths, ponds and pools all splash)
+#if GAME_CC
+    // 2003: the world is software sprites with no pick-quad lists. An upper-storey floor over the tile is in front of
+    // the ground; a drop landing on an object / Sim standing outdoors still splashes (a short, faint ellipse).
+    if (pLot->Floors(1) && (*pLot->Floors(1))[world.nX][world.nY])
+        return false;
+    return true;
+#else
     RenderContext &rc = Settings()->m_pHouseViewer->Context();
     // objects and Sims: the game's own alpha-tested pick (its scratch record list is kept for the mouse pick)
     {
@@ -1075,11 +1104,170 @@ static bool IsGroundVisibleAt(float x, float y)
         }
     }
     return true;
+#endif
 }
 
+#if GAME_CC
+// ---- 2003: software drawing into the lot view's 16-bit buffer ------------------------------------------------------
+//
+// The 2003 lot view keeps its buffer between frames and redraws only damaged rectangles, so an overlay painted into it
+// would stay. While weather (or a lightning flash) shows, Seasons_PrePaint adds the whole view to the damage before the
+// scene is drawn - what a lot with a pool already gets on every frame - and the overlay is drawn over the fresh scene
+// afterwards. Blending is per pixel in the native 555 / 565 format: a veil over the whole view, streaks, flakes,
+// splashes and the bolt as soft-edged spans.
+static bool g_bOverlayShown;                    // the overlay was drawn on the last frame (its pixels must be redrawn)
+
+struct OverlayTarget
+{
+    unsigned short *pBits;
+    int nPitch;                                 // pixels
+    cTSRect rcClip;                             // buffer coordinates, right / bottom exclusive
+    bool b565;
+};
+
+static inline unsigned short BlendPixel(unsigned short p, int r, int g, int b, int a, bool b565)
+{
+    // a 0..256; r, g, b 0..255 (the target colour)
+    int pr, pg, pb;
+    if (b565)
+    {
+        pr = (p >> 11) & 31;
+        pg = (p >> 5) & 63;
+        pb = p & 31;
+        pr += (((r >> 3) - pr) * a) >> 8;
+        pg += (((g >> 2) - pg) * a) >> 8;
+        pb += (((b >> 3) - pb) * a) >> 8;
+        return (unsigned short)((pr << 11) | (pg << 5) | pb);
+    }
+    pr = (p >> 10) & 31;
+    pg = (p >> 5) & 31;
+    pb = p & 31;
+    pr += (((r >> 3) - pr) * a) >> 8;
+    pg += (((g >> 3) - pg) * a) >> 8;
+    pb += (((b >> 3) - pb) * a) >> 8;
+    return (unsigned short)((pr << 10) | (pg << 5) | pb);
+}
+
+static inline void PlotBlend(const OverlayTarget &t, int x, int y, int r, int g, int b, float fAlpha)
+{
+    if (x < t.rcClip.left || y < t.rcClip.top || x >= t.rcClip.right || y >= t.rcClip.bottom || fAlpha <= 0.004f)
+        return;
+    int a = (int)(fAlpha * 256.0f + 0.5f);
+    if (a > 256)
+        a = 256;
+    unsigned short *p = t.pBits + y * t.nPitch + x;
+    *p = BlendPixel(*p, r, g, b, a, t.b565);
+}
+
+static void FillBlend(const OverlayTarget &t, int r, int g, int b, float fAlpha)
+{
+    int a = (int)(fAlpha * 256.0f + 0.5f);
+    if (a <= 0)
+        return;
+    if (a > 256)
+        a = 256;
+    for (int y = t.rcClip.top; y < t.rcClip.bottom; y++)
+    {
+        unsigned short *p = t.pBits + y * t.nPitch + t.rcClip.left;
+        for (int x = t.rcClip.left; x < t.rcClip.right; x++, p++)
+            *p = BlendPixel(*p, r, g, b, a, t.b565);
+    }
+}
+
+// a soft ellipse: radii (rx, ry), full alpha inside 45% of the radius, fading to 0 at the edge (the dot's profile)
+static void SoftEllipse(const OverlayTarget &t, float cx, float cy, float rx, float ry, int r, int g, int b, float fAlpha)
+{
+    if (rx < 0.5f)
+        rx = 0.5f;
+    if (ry < 0.5f)
+        ry = 0.5f;
+    int x0 = (int)floorf(cx - rx), x1 = (int)ceilf(cx + rx), y0 = (int)floorf(cy - ry), y1 = (int)ceilf(cy + ry);
+    for (int y = y0; y <= y1; y++)
+        for (int x = x0; x <= x1; x++)
+        {
+            float dx = ((float)x + 0.5f - cx) / rx, dy = ((float)y + 0.5f - cy) / ry;
+            float d = sqrtf(dx * dx + dy * dy);
+            if (d >= 1.0f)
+                continue;
+            float f = d < 0.45f ? 1.0f : 1.0f - (d - 0.45f) / 0.55f;
+            f = f * f * (3.0f - 2.0f * f);
+            PlotBlend(t, x, y, r, g, b, fAlpha * f);
+        }
+}
+
+// a soft line from the centre (cx, cy) along the unit axis (ax, ay): half length fHalfLen, half width fHalfWid; the
+// alpha fades out over the ends (bTaper, the rain streaks) or stays full along it (the bolt)
+static void SoftLine(const OverlayTarget &t, float cx, float cy, float ax, float ay, float fHalfLen, float fHalfWid,
+                     int r, int g, int b, float fAlpha, bool bTaper)
+{
+    float fExt = fHalfLen + fHalfWid + 1.0f;
+    float fWx = fabsf(ax) * fExt + fabsf(ay) * (fHalfWid + 1.0f), fWy = fabsf(ay) * fExt + fabsf(ax) * (fHalfWid + 1.0f);
+    int x0 = (int)floorf(cx - fWx), x1 = (int)ceilf(cx + fWx), y0 = (int)floorf(cy - fWy), y1 = (int)ceilf(cy + fWy);
+    if (x1 < t.rcClip.left || y1 < t.rcClip.top || x0 >= t.rcClip.right || y0 >= t.rcClip.bottom)
+        return;
+    float fWid = fHalfWid < 0.5f ? 0.5f : fHalfWid;
+    for (int y = y0; y <= y1; y++)
+        for (int x = x0; x <= x1; x++)
+        {
+            float px = (float)x + 0.5f - cx, py = (float)y + 0.5f - cy;
+            float u = px * ax + py * ay;                // along
+            float v = -px * ay + py * ax;               // across
+            float fAcross = 1.0f - (fabsf(v) - fWid + 0.5f);
+            if (fAcross <= 0.0f)
+                continue;
+            if (fAcross > 1.0f)
+                fAcross = 1.0f;
+            float fAlong = fHalfLen - fabsf(u) + 0.5f;
+            if (fAlong <= 0.0f)
+                continue;
+            if (fAlong > 1.0f)
+                fAlong = 1.0f;
+            if (bTaper)
+            {
+                float s = u / (fHalfLen > 0.5f ? fHalfLen : 0.5f);
+                fAlong *= 1.0f - s * s;
+            }
+            PlotBlend(t, x, y, r, g, b, fAlpha * fAcross * fAlong);
+        }
+}
+
+// cDDDSimsView::TSPaint, before the scene is drawn: while the overlay shows, or showed on the last frame (its pixels
+// must go), the whole view is damaged so it is redrawn (with the per-rect cost at its default, as the game does when it
+// damages the whole view for a pool)
+void Seasons_PrePaint()
+{
+    HouseViewer *pViewer = Settings() ? Settings()->m_pHouseViewer : 0;
+    if (!pViewer)
+        return;
+    bool bWeather = g_fIntensity > 0.001f && g_nParticleKind != kWeatherClear;
+    if (!bWeather && !g_bOverlayShown)
+        return;
+    float &fRenderParam = Global<float>(A::g_fRenderParam);
+    float fSaved = fRenderParam;
+    fRenderParam = Global<float>(A::g_fRenderParamDefault);
+    pViewer->m_DamageRects0.Add(pViewer->m_ViewRect);
+    fRenderParam = fSaved;
+}
+
+void Seasons_PaintOverlay(cTSBuffer *pViewBuf, int nLeft, int nTop, int nRight, int nBottom)
+#else
 void Seasons_PaintOverlay(int nLeft, int nTop, int nRight, int nBottom)
+#endif
 {
     cSimulator *pSim = Sim();
+#if GAME_CC
+    // 2003: the scene is drawn into HouseViewer's view buffer over its view rect (the rect the damage above covers)
+    HouseViewer *pViewer = Settings() ? Settings()->m_pHouseViewer : 0;
+    if (pViewer && pViewer->m_pViewBuf)
+    {
+        pViewBuf = pViewer->m_pViewBuf;
+        nLeft = pViewer->m_ViewRect.left;
+        nTop = pViewer->m_ViewRect.top;
+        nRight = pViewer->m_ViewRect.right;
+        nBottom = pViewer->m_ViewRect.bottom;
+    }
+    g_bOverlayShown = false;
+#endif
     if (!pSim || nRight <= nLeft || nBottom <= nTop)
         return;
 
@@ -1317,6 +1505,91 @@ void Seasons_PaintOverlay(int nLeft, int nTop, int nRight, int nBottom)
             i++;
     }
 
+#if GAME_CC
+    // ---- draw (2003): straight into the view buffer's pixels ----
+    if (!pViewBuf || !pViewBuf->Lock(kTSLockPixels))
+        return;
+    {
+        OverlayTarget t;
+        t.pBits = (unsigned short *)pViewBuf->GetBits();
+        t.nPitch = pViewBuf->GetPitch() / 2;
+        t.b565 = pViewBuf->Is565();
+        t.rcClip.left = nLeft < 0 ? 0 : nLeft;
+        t.rcClip.top = nTop < 0 ? 0 : nTop;
+        t.rcClip.right = nRight > pViewBuf->m_rcBounds.right ? pViewBuf->m_rcBounds.right : nRight;
+        t.rcClip.bottom = nBottom > pViewBuf->m_rcBounds.bottom ? pViewBuf->m_rcBounds.bottom : nBottom;
+        if (t.pBits && t.nPitch > 0 && t.rcClip.right > t.rcClip.left && t.rcClip.bottom > t.rcClip.top)
+        {
+            float fFlash = g_nParticleKind == kWeatherRain ? LightningFlash() : 0.0f;
+            float fL = (float)nLeft, fT = (float)nTop;
+            // atmosphere: a grey-blue veil for rain (darker in a thunderstorm), a faint cold haze for snow
+            if (g_nParticleKind == kWeatherRain)
+            {
+                float fRainVeil = 0.52f * g_fIntensity;
+                if (fRainVeil > 0.45f)
+                    fRainVeil = 0.45f;
+                fRainVeil += (0.58f - fRainVeil) * g_fStorm;
+                FillBlend(t, 40 - (int)(14.0f * g_fStorm), 48 - (int)(16.0f * g_fStorm), 62 - (int)(16.0f * g_fStorm), fRainVeil);
+            }
+            else
+                FillBlend(t, 225, 232, 245, 0.10f * g_fIntensity);
+            // lightning: the whole view lights up cold white (stronger at night)
+            if (fFlash > 0.0f)
+                FillBlend(t, 228, 234, 255, fFlash * (g_bDaytime ? 0.38f : 0.62f));
+            for (int i = 0; i < g_nParticles; i++)
+            {
+                const Particle &p = g_aParticles[i];
+                if (g_nParticleKind == kWeatherRain)
+                {
+                    float fVx = p.vx + g_fScrollVelX, fVy = p.vy + g_fScrollVelY;
+                    float fFall = sqrtf(p.vx * p.vx + p.vy * p.vy);
+                    float fLen = sqrtf(fVx * fVx + fVy * fVy);
+                    float fStretch = fLen / fFall;
+                    fStretch = fStretch < 1.0f ? 1.0f : (fStretch > 1.6f ? 1.6f : fStretch);
+                    SoftLine(t, fL + p.x, fT + p.y, fVx / fLen, fVy / fLen, p.fSize * 0.5f * fStretch, 0.45f * g_fPxScale,
+                             200, 210, 225, p.fAlpha, true);
+                }
+                else
+                {
+                    float h = p.fSize * 0.5f;
+                    SoftEllipse(t, fL + p.x, fT + p.y, h, h, 255, 255, 255, p.fAlpha);
+                }
+            }
+            for (int i = 0; i < g_nSplashes; i++)
+            {
+                const Splash &s = g_aSplashes[i];
+                float f = 1.0f - s.t / 0.22f;
+                float fRad = (2.0f + 6.0f * f) * g_fPxScale;
+                SoftEllipse(t, fL + s.x, fT + s.y, fRad, fRad * 0.35f, 210, 220, 235, 0.45f * (1.0f - f));
+            }
+            // the bolt: a wide soft glow per segment, then a thin bright core
+            int nBoltSegs = fFlash > 0.02f && g_nBoltPts > 1 ? g_nBoltPts - 2 : 0;
+            for (int nPass = 0; nPass < 2 && nBoltSegs > 0; nPass++)
+            {
+                float fHalfWid = (nPass == 0 ? 3.5f : 0.8f) * g_fPxScale;
+                for (int i = 0; i + 1 < g_nBoltPts; i++)
+                {
+                    if (i + 1 == g_nBoltBranchAt)
+                        continue;
+                    float x0 = g_afBoltX[i], y0 = g_afBoltY[i], x1 = g_afBoltX[i + 1], y1 = g_afBoltY[i + 1];
+                    float dx = x1 - x0, dy = y1 - y0;
+                    float fLen = sqrtf(dx * dx + dy * dy);
+                    if (fLen < 0.01f)
+                        fLen = 0.01f;
+                    float fWid = i >= g_nBoltBranchAt ? fHalfWid * 0.6f : fHalfWid;
+                    if (nPass == 0)
+                        SoftLine(t, fL + (x0 + x1) * 0.5f, fT + (y0 + y1) * 0.5f, dx / fLen, dy / fLen, fLen * 0.5f + fWid * 0.5f,
+                                 fWid, 170, 185, 255, 0.35f * fFlash, false);
+                    else
+                        SoftLine(t, fL + (x0 + x1) * 0.5f, fT + (y0 + y1) * 0.5f, dx / fLen, dy / fLen, fLen * 0.5f + fWid * 0.5f,
+                                 fWid, 245, 248, 255, fFlash, false);
+                }
+            }
+            g_bOverlayShown = true;
+        }
+    }
+    pViewBuf->Unlock(kTSLockPixels);
+#else
     // ---- draw: one alpha-blended batch (pipeline 3, the dot texture) ----
     EnsureDot();
     ImageRes *pDot = g_phDot ? g_phDot->Get() : 0;
@@ -1409,6 +1682,7 @@ void Seasons_PaintOverlay(int nLeft, int nTop, int nRight, int nBottom)
 
     unsigned __int64 hSet = pDot->m_Tex.m_hSet;
     Canvas::SubmitQuad3(pState, r, hSet);
+#endif
 }
 
 // ---- find_location_for modes 7..10 (snow) ------------------------------------------------------------------------

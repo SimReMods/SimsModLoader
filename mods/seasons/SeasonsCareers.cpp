@@ -8,38 +8,52 @@
 
 // ---- game parts only this file uses ----------------------------------------------------------------------------------
 
-struct cJobRaw { char m_Bytes[972]; };                  // cJob (built by the exe; destroyed with its ~cJob)
+struct cJobRaw { char m_Bytes[GA_O(972, 0x3C0)]; };     // cJob (built by the exe; destroyed with its ~cJob)
 class cJob
 {
 public:
     union
     {
         GA_F(0x054, StackString<128>, m_Name) GA_F(0x0E0, StackString<128>, m_NameAlt) GA_F(0x16C, StackString<128>, m_NameBase)
-        GA_F(0x1F8, StackString<128>, m_NameBaseAlt) GA_F(0x3B4, std::string, m_Description) GA_SIZE(972)
+        GA_F(0x1F8, StackString<128>, m_NameBaseAlt) GA_F(0x3B4, GameString, m_Description) GA_SIZE(GA_O(972, 0x3C0))
     };
     cJob() = delete;
     ~cJob() = delete;
 };
 namespace ga
 {
-    class cCareer                                       // 140 bytes
+    class cCareer                                       // 140 bytes (2003: 116)
     {
     public:
         long m_nID;                                     // +0x00
-        std::vector<cJobRaw> m_Jobs;                    // +0x04
+        GVec<cJobRaw> m_Jobs;                           // +0x04
         StackString<64> m_Name;                         // +0x10
-        std::string m_OfferDialogText[2];               // +0x5C (CTGString)
+        GameString m_OfferDialogText[2];                // +0x5C (CTGString)
         cJob &Job(int j) { return *(cJob *)&m_Jobs[j]; }
         cCareer() = delete;
     };
 }
-static_assert(sizeof(cCareer) == 140, "cCareer");
+static_assert(sizeof(cCareer) == GA_O(140, 116), "cCareer");
 static_assert(offsetof(cCareer, m_OfferDialogText) == 0x5C, "cCareer::m_OfferDialogText");
 
-static std::vector<cCareer *> &Careers() { return Global<std::vector<cCareer *>>(A::g_Careers); }
+static GVec<cCareer *> &Careers() { return Global<GVec<cCareer *>>(A::g_Careers); }
 static cCareer *GetCareerByID(int nId) { return Call<cCareer *>(A::GetCareerByID, nId); }
 
 // a new cCareer from the exe's ctor (exe heap: LoadCareers / TearDownCareers delete it), and its destructor
+#if GAME_CC
+static cCareer *NewCareer()
+{
+    void *p = Call<void *>(A::operator_new, sizeof(cCareer));
+    if (p)
+        ThisCall<void>(A::cCareer__cCareer, p);
+    return (cCareer *)p;
+}
+static void DeleteCareer(cCareer *p)
+{
+    ThisCall<void>(A::cCareer___cCareer, p);            // the exe's ~cCareer (jobs, their vector, the offer texts)
+    Call<void>(A::operator_delete, p);
+}
+#else
 static cCareer *NewCareer()
 {
     void *p = operator new(sizeof(cCareer));
@@ -55,6 +69,21 @@ static void DeleteCareer(cCareer *p)
     p->m_OfferDialogText[0].~basic_string();
     operator delete(p, sizeof(cCareer));
 }
+#endif
+
+#if GAME_CC
+// ReconLoadObject<cCareer>: 2003 has it inlined into LoadCareers (a SimpleReconObject<cCareer> on the stack streamed by
+// ReconBuilder::Reconstitute), so it is the same three calls here
+static int ReconLoadCareer(cCareer *pCareer, iResFile *pRes, long nType, short nId)
+{
+    void *aObj[4] = {};                                 // SimpleReconObject<cCareer>: vptr, the career, the type
+    void *aBuilder[4] = {};                             // ReconBuilder
+    ThisCall<void>(A::SimpleReconObject_cCareer__SimpleReconObject, aObj, pCareer, nType);
+    int r = ThisCall<int>(A::ReconBuilder__Reconstitute, aBuilder, (void *)aObj, pRes, (int)nId, (long *)0);
+    ThisCall<void>(A::ReconObject___ReconObject, aObj);
+    return r;
+}
+#endif
 
 class StdResFile                                        // 0x244 bytes, the exe's ctor / dtor
 {
@@ -146,14 +175,24 @@ static void LoadExtraCareers()
         if (nId <= 0 || GetCareerByID(nId))
             continue;
         cCareer *pCareer = NewCareer();
+#if GAME_CC
+        if (!pCareer)
+            continue;
+        if (ReconLoadCareer(pCareer, resFile.Res(), kCARR, nId) != 0 || pCareer->m_Jobs.size() != 10)
+#else
         if (Call<int>(A::ReconLoadObject_cCareer, pCareer, resFile.Res(), kCARR, (int)nId, (long *)0) != 0 || pCareer->m_Jobs.size() != 10)
+#endif
         {
             DeleteCareer(pCareer);
             continue;
         }
         pCareer->m_nID = nId;
         LoadCareerStrings(resFile, pCareer);
+#if GAME_CC
+        Careers().PushBack(A::CareerVec__push_back, pCareer);  // the game's vector: grown by the exe's own push_back
+#else
         Careers().push_back(pCareer);
+#endif
         s_pExtraCareerIds->push_back(nId);
     }
     if (!s_pExtraCareerIds->empty())
@@ -172,7 +211,8 @@ static bool __cdecl W_LoadCareers()
 
 // ---- E3: SaveCareers writes the Maxis tracks only ---------------------------------------------------------------------
 // While the original runs, the extra careers are out of g_Careers (they live in SeasonsCareers.iff). LoadExtraCareers
-// appends them after every Maxis track, so they are the tail of the vector; they go back in the same order.
+// appends them after every Maxis track, so they are the tail of the vector; they go back in the same order. 2003: the
+// tail is cut and put back in place (the vector keeps its storage, so nothing is allocated or freed).
 ORIG(SaveCareers, bool(__cdecl *)());
 static bool __cdecl W_SaveCareers()
 {
@@ -181,7 +221,7 @@ static bool __cdecl W_SaveCareers()
         std::vector<cCareer *> m_Hidden;
         Hide()
         {
-            std::vector<cCareer *> &careers = Careers();
+            GVec<cCareer *> &careers = Careers();
             size_t nKeep = careers.size();
             while (nKeep > 0 && s_pExtraCareerIds)
             {
@@ -194,9 +234,22 @@ static bool __cdecl W_SaveCareers()
                 nKeep--;
             }
             m_Hidden.assign(careers.begin() + nKeep, careers.end());
+#if GAME_CC
+            careers._Mylast = careers._Myfirst + nKeep;
+#else
             careers.resize(nKeep);
+#endif
         }
+#if GAME_CC
+        ~Hide()
+        {
+            GVec<cCareer *> &careers = Careers();
+            for (size_t i = 0; i < m_Hidden.size() && careers._Mylast < careers._Myend; i++)
+                *careers._Mylast++ = m_Hidden[i];
+        }
+#else
         ~Hide() { Careers().insert(Careers().end(), m_Hidden.begin(), m_Hidden.end()); }
+#endif
     } hide;
     return o_SaveCareers();
 }
@@ -242,6 +295,74 @@ static void __fastcall W_LoadPersistentData(Neighborhood *n, void *, cXPerson *p
 // exactly as before (no icon). Careers 0..21 always use the Maxis images. The original TSPaint's SetRow(career id)
 // works on the stacked strip as it is.
 
+static cTSBufferRef *s_phCareerIcons, *s_phJobBtnStrip, *s_phCareerPopup;   // kept for the session (no exit-time release)
+static int s_nCareerIconRows = 0;
+static int s_nCareerPopupRows = 0;
+
+#if GAME_CC
+// 2003: an image is a cTSBuffer; its rect is its bounds
+static cTSRect RectFromImageSize(const cTSBufferRef &h) { return RectOfBuffer(h.m_p); }
+
+// The strips: a BMP file decoded into a cTSBuffer in the display format of the Maxis image (555 / 565), with the Maxis
+// image's colour key; checked against the Maxis cell size
+static cTSBufferRef LoadCareerStrip(const char *pszLeaf, const cTSBufferRef &hMaxis, int nMaxisRows, int *pnRows)
+{
+    *pnRows = 0;
+    cTSBuffer *pMaxis = hMaxis.m_p;
+    if (!pMaxis)
+        return cTSBufferRef();
+    StackString<260> path;
+    BuildInstallPath("ExpansionPack8/", pszLeaf, &path);
+    if (GetFileAttributesA(path.c_str()) == INVALID_FILE_ATTRIBUTES)
+        return cTSBufferRef();
+    int nFormat = pMaxis->Is565() ? 7 : 5;
+    cTSBufferRef hStrip(Call<cTSBuffer *>(A::Texture_LoadFromBmpFile, (const StringBuffer *)&path, nFormat));
+    if (!hStrip.m_p)
+        return cTSBufferRef();
+    unsigned int nWidth = pMaxis->m_rcBounds.right;
+    unsigned int nCellH = pMaxis->m_rcBounds.bottom / nMaxisRows;
+    unsigned int nStripW = hStrip.m_p->m_rcBounds.right;
+    unsigned int nStripH = hStrip.m_p->m_rcBounds.bottom;
+    if (nCellH == 0 || nStripW != nWidth || nStripH == 0 || nStripH % nCellH != 0)
+    {
+        Seasons_Log("ExpansionPack8\\%s: %ux%u does not fit the Maxis cells (%u wide, %u high): not used", pszLeaf, nStripW,
+                    nStripH, nWidth, nCellH);
+        return cTSBufferRef();
+    }
+    hStrip.m_p->SetBlitFlags(&pMaxis->m_BlitFlags);    // the same transparent colour as the Maxis art
+    *pnRows = (int)(nStripH / nCellH);
+    return hStrip;
+}
+
+// one strip copied 1:1 into pDst at y (colour key off for the copy, so the transparent pixels are copied too)
+static void CopyStrip(cTSBuffer *pDst, cTSBuffer *pSrc, long nY)
+{
+    cTSBlitFlags saved = pSrc->m_BlitFlags;
+    pSrc->ClearColorKey();
+    cTSRect rcDst = { 0, nY, pSrc->m_rcBounds.right, nY + pSrc->m_rcBounds.bottom };
+    pDst->Blit(pSrc, &pSrc->m_rcBounds, &rcDst, 0);
+    pSrc->SetBlitFlags(&saved);
+}
+
+// hTop with hBottom below it, copied 1:1 into one buffer (same width; the caller checked it). Empty on failure.
+static cTSBufferRef StackStrips(const cTSBufferRef &hTop, const cTSBufferRef &hBottom)
+{
+    cTSBuffer *pTop = hTop.m_p, *pBottom = hBottom.m_p;
+    cTSBufferRef hStack(cTSBuffer::New());
+    cTSBuffer *pStack = hStack.m_p;
+    if (!pStack)
+        return cTSBufferRef();
+    if (!pStack->Create(pTop->m_rcBounds.right, pTop->m_rcBounds.bottom + pBottom->m_rcBounds.bottom, pTop->m_PixelFormat, 0, 0, 0))
+        return cTSBufferRef();
+    if (!pStack->Lock(kTSLockBlit))
+        return cTSBufferRef();
+    CopyStrip(pStack, pTop, 0);
+    CopyStrip(pStack, pBottom, pTop->m_rcBounds.bottom);
+    pStack->Unlock(kTSLockBlit);
+    pStack->SetBlitFlags(&pTop->m_BlitFlags);
+    return hStack;
+}
+#else
 static cTSRect RectFromImageSize(const cTSBufferRef &h)
 {
     cTSRect rc;
@@ -279,10 +400,6 @@ template <class F> static cTSBufferRef RenderToTexture(unsigned w, unsigned h, F
     CallRet(&r, A::RenderTarget_TakeTextureRef, pDevice, &hTarget);
     return r;
 }
-
-static cTSBufferRef *s_phCareerIcons, *s_phJobBtnStrip, *s_phCareerPopup;   // kept for the session (no exit-time release)
-static int s_nCareerIconRows = 0;
-static int s_nCareerPopupRows = 0;
 
 static cTSBufferRef LoadCareerStrip(const char *pszLeaf, const cTSBufferRef &hMaxis, int nMaxisRows, int *pnRows)
 {
@@ -324,7 +441,28 @@ static cTSBufferRef StackStrips(const cTSBufferRef &hTop, const cTSBufferRef &hB
         canvas.DrawTexturedQuad3(hBottomSet, tl2, br2, 0.0f, uvTL, uvBR, 0xFFFFFFFFu);
     });
 }
+#endif
 
+#if GAME_CC
+class cFlashyBtn                                        // a cTSWinBtn; 2003: the image is a raw pointer holding one reference
+{
+public:
+    union { GA_F(0xD8, cTSBuffer *, m_pImage) GA_F(0xEC, int, m_nRowCount) GA_F(0xF0, int, m_nFrameCount) GA_F(0x134, cTSRect, m_rcFgSrc) };
+    cFlashyBtn() = delete;
+    void InvalidateSelf() { ThisCall<void>(A::cTSWin__InvalidateSelf, this); }
+    void SetForeground(cTSBuffer *p, cTSPoint ofs) { ThisCall<void>(A::cTSWinBtn__SetForeground, this, p, ofs); }
+};
+class cWinSubpanelJob
+{
+public:
+    union
+    {
+        GA_F(0xE8, GVec<cFlashyBtn *>, m_vecJobBtns) GA_F(0x204, cTSBufferRef, m_hImgJobPopupComposite)
+        GA_F(0x208, cTSBufferRef, m_hImgCareerIcons)
+    };
+    cWinSubpanelJob() = delete;
+};
+#else
 class cFlashyBtn                                        // a cTSWinBtn
 {
 public:
@@ -343,6 +481,7 @@ public:
     };
     cWinSubpanelJob() = delete;
 };
+#endif
 
 static void Keep(cTSBufferRef *&p, cTSBufferRef h)
 {
@@ -364,9 +503,18 @@ static void JobPanelInit(cWinSubpanelJob *pPanel)
         return;
     Keep(s_phJobBtnStrip, StackStrips(pPanel->m_hImgCareerIcons, *s_phCareerIcons));
     cFlashyBtn *pCareerBtn = pPanel->m_vecJobBtns[0];
+#if GAME_CC
+    if (!s_phJobBtnStrip->m_p || !pCareerBtn || pCareerBtn->m_pImage != pPanel->m_hImgCareerIcons.m_p)
+        return;
+    // the button releases at Shutdown the reference its SetImage took on the Maxis strip: hand that over to ours
+    pCareerBtn->m_pImage->Release();
+    s_phJobBtnStrip->m_p->AddRef();
+    pCareerBtn->m_pImage = s_phJobBtnStrip->m_p;        // not SetImage: that resizes the button
+#else
     if (!s_phJobBtnStrip->m_p || !pCareerBtn || pCareerBtn->m_hImage.m_p != pPanel->m_hImgCareerIcons.m_p)
         return;
     pCareerBtn->m_hImage = *s_phJobBtnStrip;            // not SetImage: that resizes the button
+#endif
     pCareerBtn->m_nRowCount = 22 + s_nCareerIconRows;
     pCareerBtn->InvalidateSelf();
 }
@@ -391,7 +539,8 @@ static bool __fastcall W_JobPanelShutdown(cWinSubpanelJob *p, void *)
 }
 
 // GetJobPopupComposite: the original answers careers 0..21 (and -1) and returns false for the rest; careers 22+ take
-// their slice of seasons-career-popup.bmp (same slice size)
+// their slice of seasons-career-popup.bmp (same slice size). Its result is whether there is an image (2003: the image
+// itself is tested; Legacy tests the skill bar background).
 ORIG(GetJobPopupComposite, bool(__thiscall *)(cWinSubpanelJob *, unsigned, cTSRect *, cTSBufferRef *));
 static bool __fastcall W_GetJobPopupComposite(cWinSubpanelJob *p, void *, unsigned nCareerID, cTSRect *pRect, cTSBufferRef *phImage)
 {
@@ -404,7 +553,11 @@ static bool __fastcall W_GetJobPopupComposite(cWinSubpanelJob *p, void *, unsign
         pRect->top += (long)(nCareerID - 22) * nSliceHeight;
         pRect->bottom = pRect->top + nSliceHeight;
         *phImage = *s_phCareerPopup;
+#if GAME_CC
+        return phImage->m_p != 0;
+#else
         return p->m_hImgSkillBarBg.m_p != 0;
+#endif
     }
     return false;
 }
@@ -437,6 +590,10 @@ static void BuildAtWorkCareerIcons()
         int nRowOfsY = iRow * (rcSrc.bottom - rcSrc.top);
         rcSrc.top += nRowOfsY;
         rcSrc.bottom += nRowOfsY;
+#if GAME_CC
+        // 2003: the same 3/4 sub-rect copy as the Maxis icons (the new buffer starts at refcount 0)
+        (*s_pAtWorkIcons)[iRow] = cTSBufferRef(Call<cTSBuffer *>(A::Buffer_Zoom, 0.75f, hSheet.m_p, (const cTSRect *)&rcSrc, 1));
+#else
         const ImageRes *pSheet = hSheet.m_p;
         (*s_pAtWorkIcons)[iRow] = RenderToTexture(3 * (rcSrc.right - rcSrc.left) / 4, 3 * (rcSrc.bottom - rcSrc.top) / 4,
                                                  [&](Canvas &canvas, RenderTarget *pTarget) {
@@ -447,15 +604,27 @@ static void BuildAtWorkCareerIcons()
             unsigned __int64 hSet = pSheet->m_Tex.m_hSet;
             canvas.DrawTexturedQuad3(hSet, tl, br, 0.0f, uvTL, uvBR, 0xFFFFFFFFu);
         });
+#endif
     }
 }
 
+#if GAME_CC
+class cWinPeople                                        // 2003: the Maxis at-work icons are a plain array
+{
+public:
+    union { GA_F(0xF0, GVec<cFlashyBtn *>, m_SimBtns) GA_F(0x468, cTSBufferRef *, m_pCareerIcons) GA_F(0x46C, int, m_nCareerIcons) };
+    cWinPeople() = delete;
+    bool HasCareerIcons() const { return m_pCareerIcons && m_nCareerIcons > 0; }
+    cTSBuffer *CareerIcon0() const { return m_pCareerIcons[0].m_p; }
+};
+#else
 class cWinPeople
 {
 public:
     union { GA_F(0x148, std::vector<cFlashyBtn *>, m_SimBtns) GA_F(0x614, std::vector<cTSBufferRef>, m_CareerIcons) };
     cWinPeople() = delete;
 };
+#endif
 
 // cWinPeople::UpdateAtWorkStatus (every return path): the original sets no overlay for a Sim at work in a career it has
 // no icon for (id >= 22). Here those Sims get theirs, placed exactly as the original places the Maxis ones; the walk
@@ -465,8 +634,13 @@ static void __fastcall W_UpdateAtWorkStatus(cWinPeople *pPeople, void *)
 {
     o_UpdateAtWorkStatus(pPeople);
     BuildAtWorkCareerIcons();
+#if GAME_CC
+    if (s_pAtWorkIcons->empty() || !pPeople->HasCareerIcons())
+        return;
+#else
     if (s_pAtWorkIcons->empty() || pPeople->m_CareerIcons.empty())
         return;
+#endif
     for (unsigned int iBtn = 0; iBtn < pPeople->m_SimBtns.size(); iBtn++)
     {
         int hSim = Call<int>(A::PersonFinder__GetPersonInHouseIndex, (int)iBtn);
@@ -481,13 +655,24 @@ static void __fastcall W_UpdateAtWorkStatus(cWinPeople *pPeople, void *)
         if (!hOverlay.m_p)
             continue;
         cFlashyBtn *pBtn = pPeople->m_SimBtns[iBtn];
+#if GAME_CC
+        if (!pBtn->m_pImage || !pBtn->m_nFrameCount || !pBtn->m_nRowCount)
+            continue;
+        cTSRect rcIcon = RectOfBuffer(pPeople->CareerIcon0());
+        cTSRect rcFrame = RectOfBuffer(pBtn->m_pImage);
+#else
         cTSRect rcIcon = RectFromImageSize(pPeople->m_CareerIcons[0]);
         cTSRect rcFrame = RectFromImageSize(pBtn->m_hImage);
+#endif
         rcFrame.right /= pBtn->m_nFrameCount;
         rcFrame.bottom /= pBtn->m_nRowCount;
         cTSPoint ofs = { rcFrame.right - rcIcon.right - rcFrame.left + rcIcon.left - 4,
                          rcFrame.bottom + rcIcon.top - rcFrame.top - rcIcon.bottom - 4 };
+#if GAME_CC
+        pBtn->SetForeground(hOverlay.m_p, ofs);         // 2003: the raw buffer
+#else
         pBtn->SetForeground(hOverlay, ofs);
+#endif
         pBtn->m_rcFgSrc = rcIcon;
     }
 }
