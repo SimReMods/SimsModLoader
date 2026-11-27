@@ -61,6 +61,7 @@ GA_FN(StringBuffer__compare,                        0x46f93d)
 GA_FN(StringBuffer__compareNoCase,                  0x46f973)    // (const StringBuffer &)
 GA_FN(BuildRamp_WideColorChunk,                     0x49e846)
 GA_FN(GViewer_PointToTile,                          0x4a6a9d)
+GA_FN(GViewer_GetPixelTopOfTile,                    0x4a6ad9)    // 2003: (CTilePt *) -> world pixel row of the tile top
 GA_FN(cFixedWorld__GetWall,                         0x479737)
 GA_FN(TileWalls__GetWallBetweenDir,                 0x53c1aa)
 GA_FN(ObjectIterator__ObjectIterator,               0x43f371)    // (House *, const CTilePt *, int)
@@ -146,6 +147,7 @@ GA_FN(cTSBuffer__MakeNativeColor,                   0x5dfe3b)    // 2003: (r, g,
 GA_FN(Texture_LoadFromBmpFile,                      0x4dedc6)    // 2003: (const StringBuffer &, int nFormat), refcount 0
 GA_FN(Buffer_Zoom,                                  0x4ba969)    // 2003: (float, cTSBuffer *, const cTSRect *, bool)
 GA_FN(DDDDamageList__Add,                           0x5cddcf)    // 2003: (const RECT &)
+GA_FN(ZBufferLookup__GetTerrainZ,                   0x4c9f9a)    // 2003: (const CTilePt &, int nScale, bool bClamp)
 // 2003: the game heap and its SGI STL containers / strings (memory the game frees)
 GA_FN(operator_new,                                 0x634c43)    // 2003
 GA_FN(operator_delete,                              0x6321f0)    // 2003

@@ -29,10 +29,36 @@ struct DDDDamageList
 {
     bool Add(const cTSRect &rc) { return ThisCall<bool>(A::DDDDamageList__Add, this, &rc); }
 };
+// per-zoom depth tables of the software renderer: the depth the terrain of a tile is drawn at
+struct ZBufferLookup
+{
+    int GetTerrainZ(const CTilePt &tile, int nScale, bool bClamp)
+    {
+        return ThisCall<int>(A::ZBufferLookup__GetTerrainZ, this, &tile, nScale, bClamp ? 1 : 0);
+    }
+    // The depth of the ground plane of view tile `tile` at view row nY: floors, paths, patios and water are drawn at it
+    // (the zoom's row table, offset by the tile's terrain depth at the tile's top row, as the floor blitter does); the
+    // terrain fill draws the whole tile at its top-row depth + 80, behind it. INT_MIN when the row is outside the table.
+    int GroundPlaneZ(const CTilePt &tile, int nScale, int nY)
+    {
+        int nSlot = 3 - nScale;
+        const int *pRows = *(const int *const *)((const char *)this + 0x10 + 4 * nSlot);
+        int nRowsAbove = *(const int *)((const char *)this + 0x1C + 4 * nSlot);
+        int nRowsBelow = *(const int *)((const char *)this + 0x28);
+        CTilePt top = tile;
+        top.nLevel = 1;
+        int nScroll = Global<int>(A::g_nScrollOffsetY);
+        int nTop = Call<int>(A::GViewer_GetPixelTopOfTile, &top) - nScroll, nRow = nY - nScroll;
+        if (!pRows || nTop < -nRowsAbove || nRow < -nRowsAbove || nTop >= nRowsBelow || nRow >= nRowsBelow)
+            return INT_MIN;
+        return pRows[nRow] + GetTerrainZ(tile, nScale, false) - pRows[nTop];
+    }
+};
 class HouseViewer
 {
 public:
     union { GA_F(0x28, cTSRect, m_ViewRect) GA_F(0x70, cTSBuffer *, m_pViewBuf) GA_F(0x88, DDDDamageList, m_DamageRects0) };
+    ZBufferLookup *GetZBufferLookup() { return VCall<ZBufferLookup *>(this, 9); }
 };
 #else
 struct PickQuadVert { float m_fX, m_fY, m_fZ, m_Attrib[4], m_Reserved[8]; };
@@ -1031,6 +1057,65 @@ static bool QuadCoversPoint(const PickQuadRecord &q, float fX, float fY)
 // / Sims standing in front of the ground there.
 #endif
 
+#if GAME_CC
+// 2003: the lot view's depth buffer (16 bits per pixel, smaller is nearer, 0xFFFF where nothing was drawn), read while
+// the overlay is updated (OverlayDepthLock, right after the scene was drawn into the view buffer). Ground-level surfaces
+// are at or behind the ground plane of their row (GroundPlaneZ): floors, paths, patios and water on it, the terrain fill
+// behind it. Anything drawn in front of the ground there - walls, fences, furniture, plants, Sims - is nearer.
+static const unsigned short *g_pOverlayZ;           // locked depth bits, 0 when there is none
+static int g_nOverlayZPitch;                         // pixels
+static long g_nOverlayZLeft, g_nOverlayZTop;         // view origin in the buffer
+static cTSRect g_rcOverlayZ;                         // readable area (buffer coordinates)
+static const int kGroundDepthSlack = 8;     // rounding of the row tables
+
+struct OverlayDepthLock
+{
+    cTSBuffer *m_pZ;
+    OverlayDepthLock(cTSBuffer *pViewBuf, long nLeft, long nTop) : m_pZ(0)
+    {
+        g_pOverlayZ = 0;
+        cTSBuffer *pZ = pViewBuf ? pViewBuf->m_pZBuffer : 0;
+        if (!pZ || !pZ->Lock(kTSLockPixels))
+            return;
+        m_pZ = pZ;
+        g_pOverlayZ = (const unsigned short *)pZ->GetBits();
+        g_nOverlayZPitch = pZ->GetPitch() / 2;
+        g_nOverlayZLeft = nLeft;
+        g_nOverlayZTop = nTop;
+        g_rcOverlayZ = pZ->m_rcBounds;
+        if (g_nOverlayZPitch <= 0)
+            g_pOverlayZ = 0;
+    }
+    ~OverlayDepthLock()
+    {
+        g_pOverlayZ = 0;
+        if (m_pZ)
+            m_pZ->Unlock(kTSLockPixels);
+    }
+};
+
+// the ground of view tile `view` is what the depth buffer shows at view pixel (nX, nY)
+static bool GroundUncovered(CTilePt view, long nX, long nY)
+{
+    if (!g_pOverlayZ)
+        return true;                                    // no depth buffer: the tile tests above only
+    long bx = g_nOverlayZLeft + nX, by = g_nOverlayZTop + nY;
+    if (bx < g_rcOverlayZ.left || by < g_rcOverlayZ.top || bx >= g_rcOverlayZ.right || by >= g_rcOverlayZ.bottom)
+        return false;
+    HouseViewer *pViewer = Settings()->m_pHouseViewer;
+    ZBufferLookup *pLookup = pViewer ? pViewer->GetZBufferLookup() : 0;
+    int nScale = Global<int>(A::g_nViewScale);
+    if (!pLookup || nScale < 1 || nScale > 3)
+        return true;
+    view.nLevel = 0;
+    int nGround = pLookup->GroundPlaneZ(view, nScale, (int)by);
+    if (nGround == INT_MIN)
+        return true;
+    int nZ = g_pOverlayZ[by * g_nOverlayZPitch + bx];
+    return nZ >= nGround - kGroundDepthSlack;
+}
+#endif
+
 static bool IsGroundVisibleAt(float x, float y)
 {
     cFixedWorld *pLot = Lot();
@@ -1052,10 +1137,11 @@ static bool IsGroundVisibleAt(float x, float y)
         return false;        // indoors (tile flag 4 = outside: grass, patios, paths, ponds and pools all splash)
 #if GAME_CC
     // 2003: the world is software sprites with no pick-quad lists. An upper-storey floor over the tile is in front of
-    // the ground; a drop landing on an object / Sim standing outdoors still splashes (a short, faint ellipse).
+    // the ground; and the view's depth buffer tells whether a wall, an object or a Sim was drawn nearer than the ground
+    // at the landing pixel (GroundUncovered)
     if (pLot->Floors(1) && (*pLot->Floors(1))[world.nX][world.nY])
         return false;
-    return true;
+    return GroundUncovered(view, nX, nY);
 #else
     RenderContext &rc = Settings()->m_pHouseViewer->Context();
     // objects and Sims: the game's own alpha-tested pick (its scratch record list is kept for the mouse pick)
@@ -1267,6 +1353,7 @@ void Seasons_PaintOverlay(int nLeft, int nTop, int nRight, int nBottom)
         nBottom = pViewer->m_ViewRect.bottom;
     }
     g_bOverlayShown = false;
+    OverlayDepthLock depth(pViewBuf, nLeft, nTop);  // the splash test reads the scene's depth
 #endif
     if (!pSim || nRight <= nLeft || nBottom <= nTop)
         return;

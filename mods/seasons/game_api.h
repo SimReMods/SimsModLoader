@@ -231,7 +231,7 @@ namespace ga
         union
         {
             GA_F(0x08, cTSPixelFormat, m_PixelFormat) GA_F(0x14, cTSRect, m_rcBounds) GA_F(0x24, cTSBlitFlags, m_BlitFlags)
-            GA_F(0x58, int, m_nRefCount) GA_SIZE(kSize)
+            GA_F(0x58, int, m_nRefCount) GA_F(0x5C, cTSBuffer *, m_pZBuffer) GA_SIZE(kSize)
         };
         cTSBuffer() = delete;
         bool Create(int nWidth, int nHeight, cTSPixelFormat fmt, void *pPalette, int bVideoMemory, int nMemType)
