@@ -2,7 +2,7 @@
 
 A mod loader for The Sims 1 Legacy Collection: a drop-in `winmm.dll` that patches the game in memory while it runs
 and loads mods from a `mods` folder, without changing any of the game's files on disk. This repository contains the
-loader and three mods: Visit Lots, 4 Stories and Eyedropper.
+loader and the mods: Visit Lots, 4 Stories, Eyedropper and the engine part of Seasons.
 
 ## Visit Lots mod
 
@@ -122,10 +122,18 @@ UIGraphics\Eyedropper\Eyedropper.cur
 
 If you report a problem, attach `mod.log` from the game folder.
 
+## Seasons (engine part)
+
+`mods/seasons/` is the engine part of "The Sims: Seasons": seasons and weather on normal lots, the season icon and
+calendar, raincoats, umbrellas and winter clothes, the ExpansionPack8 objects folder and the Seasons careers.
+
+> **DO NOT INSTALL IT ON YOUR OWN. The required files are shipped in https://github.com/SimReMods/Seasons** - install
+> Seasons from there. Its installer downloads this repository's `sims-seasons-DO-NOT-DOWNLOAD.zip` itself.
+
 ## For developers
 
 The `winmm.dll` loader (`modloader/`) patches the game in memory and loads `mods\*.dll`; nothing on disk is changed.
-`mods/visit_lots/`, `mods/multistory/` and `mods/eyedropper/` are the mods, `mods/example_mod/` a minimal example. Build each with its
+`mods/visit_lots/`, `mods/multistory/`, `mods/eyedropper/` and `mods/seasons/` are the mods, `mods/example_mod/` a minimal example. Build each with its
 `build.bat` from the "x86 Native Tools Command Prompt for VS 2022", then `python package.py` makes one release zip
 per mod.
 
