@@ -9,7 +9,8 @@
 //              which does the feature's part and calls X;
 //   stub     - a few bytes inside an original function become a jmp to a naked S_* asm stub (// ASM: says why) that
 //              resumes at a GA_LABEL of the same function.
-// A wrapper's code after the original does not run when the original throws. Each site has a 16-byte signature (gen_sigs.h, made from the game build this mod is for);
+// A wrapper's code after the original does not run when the original throws. Each site has a 16-byte signature
+// (gen_sigs.h, gen_sigs_ea.h for the EA app build, made from the game build this mod is for);
 // all of them are checked on the running game first, and nothing is patched unless every one matches.
 #include <windows.h>
 #include <stdio.h>
@@ -19,9 +20,13 @@
 #include "simsmod.h"
 #include "Seasons.h"
 #include "SeasonsHooks.h"
+#if GAME_EA
+#include "gen_sigs_ea.h"
+#else
 #include "gen_sigs.h"
+#endif
 
-extern "C" __declspec(dllexport) const unsigned SimsMod_Games = SIMSMOD_GAME_LEGACY;
+extern "C" __declspec(dllexport) const unsigned SimsMod_Games = GAME_EA ? SIMSMOD_GAME_LEGACY_EA : SIMSMOD_GAME_LEGACY;
 
 unsigned ga::g_exeBase;
 static const SimsLoaderApi *s_api;
@@ -39,7 +44,7 @@ void Seasons_Log(const char *fmt, ...)
 }
 
 // ---- one heap with the exe ---------------------------------------------------------------------------------------
-// operator new / delete are the exe's (link-time 0x7a78be / 0x7a74ef), so a block this DLL allocates can be freed by
+// operator new / delete are the exe's (game_addr.h OperatorNew / OperatorDelete), so a block this DLL allocates can be freed by
 // the game and the other way round: game vectors grown here, careers created here and deleted by LoadCareers. Looked up
 // from the main module on first use (static constructors run before SimsMod_Init).
 static void *ExeFn(unsigned va)
@@ -49,12 +54,12 @@ static void *ExeFn(unsigned va)
         s_nBase = (unsigned)GetModuleHandleA(0);
     return (void *)(va - 0x400000u + s_nBase);
 }
-void *operator new(size_t n) { return ((void *(__cdecl *)(size_t))ExeFn(0x7a78be))(n); }
-void *operator new[](size_t n) { return ((void *(__cdecl *)(size_t))ExeFn(0x7a78be))(n); }
-void operator delete(void *p) noexcept { ((void(__cdecl *)(void *, size_t))ExeFn(0x7a74ef))(p, 0); }
-void operator delete[](void *p) noexcept { ((void(__cdecl *)(void *, size_t))ExeFn(0x7a74ef))(p, 0); }
-void operator delete(void *p, size_t n) noexcept { ((void(__cdecl *)(void *, size_t))ExeFn(0x7a74ef))(p, n); }
-void operator delete[](void *p, size_t n) noexcept { ((void(__cdecl *)(void *, size_t))ExeFn(0x7a74ef))(p, n); }
+void *operator new(size_t n) { return ((void *(__cdecl *)(size_t))ExeFn(A::OperatorNew))(n); }
+void *operator new[](size_t n) { return ((void *(__cdecl *)(size_t))ExeFn(A::OperatorNew))(n); }
+void operator delete(void *p) noexcept { ((void(__cdecl *)(void *, size_t))ExeFn(A::OperatorDelete))(p, 0); }
+void operator delete[](void *p) noexcept { ((void(__cdecl *)(void *, size_t))ExeFn(A::OperatorDelete))(p, 0); }
+void operator delete(void *p, size_t n) noexcept { ((void(__cdecl *)(void *, size_t))ExeFn(A::OperatorDelete))(p, n); }
+void operator delete[](void *p, size_t n) noexcept { ((void(__cdecl *)(void *, size_t))ExeFn(A::OperatorDelete))(p, n); }
 void *operator new(size_t n, const std::nothrow_t &) noexcept
 {
     try { return operator new(n); } catch (...) { return 0; }
@@ -397,19 +402,37 @@ static void __fastcall W_NextSuit(cWinVitaBtnSolo *b, void *)
 }
 
 // Neighbor::GetPersistentDataFields: the raincoat and umbrella a Sim bought are kept with the neighbour (person data
-// 240 / 241). The original's cached path returns the list already extended; its building path gets the two appended.
+// 240 / 241). The two ends of the path that builds the list (re-built when the persistent-data version changes) call
+// S_PdfBuilt; the cached path returns the list already extended. The entry is left alone: other mods check its bytes.
 struct PersDataPair { int m_nField, m_nKind; };
-ORIG(GetPersistentDataFields, std::vector<PersDataPair> *(__cdecl *)(int));
-static std::vector<PersDataPair> *__cdecl W_GetPersistentDataFields(int nVersion)
+static void __cdecl Q_AppendFields()
 {
-    std::vector<PersDataPair> *pFields = o_GetPersistentDataFields(nVersion);
-    size_t n = pFields->size();
-    if (n < 2 || (*pFields)[n - 2].m_nField != kPersonDataSeasonsRainCoat || (*pFields)[n - 1].m_nField != kPersonDataSeasonsUmbrella)
+    std::vector<PersDataPair> &fields = Global<std::vector<PersDataPair>>(A::s_PersistentFields);
+    size_t n = fields.size();
+    if (n >= 2 && fields[n - 2].m_nField == kPersonDataSeasonsRainCoat && fields[n - 1].m_nField == kPersonDataSeasonsUmbrella)
+        return;
+    fields.push_back({ kPersonDataSeasonsRainCoat, 1 });
+    fields.push_back({ kPersonDataSeasonsUmbrella, 1 });
+}
+static int *s_pPersistentFieldsVersion;
+// ASM: replaces `mov dword ptr [s_nPersistentFieldsVersion], edi` (6 bytes; call + nop) at both ends of the build path.
+// Does the store, appends the fields, returns to the original's return sequence; eax (the result on one path), ecx and
+// edx are kept.
+__declspec(naked) static void S_PdfBuilt()
+{
+    __asm
     {
-        pFields->push_back({ kPersonDataSeasonsRainCoat, 1 });
-        pFields->push_back({ kPersonDataSeasonsUmbrella, 1 });
+        push eax
+        push ecx
+        push edx
+        mov eax, s_pPersistentFieldsVersion
+        mov [eax], edi
+        call Q_AppendFields
+        pop edx
+        pop ecx
+        pop eax
+        ret
     }
-    return pFields;
 }
 
 // ---- the hook table ------------------------------------------------------------------------------------------------
@@ -434,7 +457,8 @@ static const Hook s_CoreHooks[] = {
     WRAP(cWinVitaBtnSolo__GetCurrentSuitIndex,      W_GetCurrentSuitIndex, o_GetCurrentSuitIndex),
     WRAP(cWinVitaBtnSolo__PreviousSuit,             W_PreviousSuit, o_PreviousSuit),
     WRAP(cWinVitaBtnSolo__NextSuit,                 W_NextSuit, o_NextSuit),
-    WRAP(Neighbor__GetPersistentDataFields,         W_GetPersistentDataFields, o_GetPersistentDataFields),
+    CALL_STUB(PDF_Built1,                           S_PdfBuilt),
+    CALL_STUB(PDF_Built2,                           S_PdfBuilt),
 };
 
 static const HookTable s_Tables[] = {
@@ -460,6 +484,7 @@ extern "C" __declspec(dllexport) int __cdecl SimsMod_Init(const SimsLoaderApi *a
     ga::g_exeBase = api->exeBase;
     s_vaGrsState2Next = Va(A::GRS_State2Next);
     s_vaGrsYield = Va(A::GRS_Yield);
+    s_pPersistentFieldsVersion = &Global<int>(A::s_nPersistentFieldsVersion);
     // every site must match its signature, or nothing is patched
     int nBad = 0;
     unsigned nHooks = 0;

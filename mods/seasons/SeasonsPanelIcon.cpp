@@ -474,7 +474,13 @@ static void ShowSeasonCalendar()
 class cWinViewControl
 {
 public:
+#if GAME_EA
+    // the EA app build lays this class out 12 bytes shorter from +0x138 on (its Init stores the funds button at +0x15c
+    // and the friend count at +0x250)
+    union { GA_F(0x15C, cTSWinBtn *, m_pFundsBtn) GA_F(0x250, cTSWinBtn *, m_pFriendCountBtn) };
+#else
     union { GA_F(0x168, cTSWinBtn *, m_pFundsBtn) GA_F(0x25C, cTSWinBtn *, m_pFriendCountBtn) };
+#endif
     cWinViewControl() = delete;
 };
 
@@ -488,16 +494,33 @@ static bool __fastcall W_ViewControlInit(cWinViewControl *p, void *)
     return r;
 }
 
-// cWinViewControl::UpdateViewFromCPState (at its end): show / hide / change the season icon
-ORIG(UpdateViewFromCPState, void(__thiscall *)(cWinViewControl *, void *));
-static void __fastcall W_UpdateViewFromCPState(cWinViewControl *p, void *, void *pState)
+// cWinViewControl::UpdateViewFromCPState (at its end): show / hide / change the season icon. Its entry is left alone
+// (4 Stories detours it); both epilogues jump here.
+static void __cdecl Q_UpdateViewEnd(cWinViewControl *p)
 {
-    o_UpdateViewFromCPState(p, pState);
     Seasons_PanelIconUpdate((cTSWin *)p, p->m_pFundsBtn, p->m_pFriendCountBtn);
+}
+// ASM: replaces `pop edi; pop esi; pop ebx; mov esp, ebp` (5 bytes) before `pop ebp; ret 4` in both epilogues; edi =
+// this. Updates the icon (cdecl: ebx / esi / edi / ebp kept), then finishes the epilogue (the function returns void).
+__declspec(naked) static void S_UpdateViewEnd()
+{
+    __asm
+    {
+        push edi
+        call Q_UpdateViewEnd
+        add esp, 4
+        pop edi
+        pop esi
+        pop ebx
+        mov esp, ebp
+        pop ebp
+        ret 4
+    }
 }
 
 const Hook g_PanelHooks[] = {
     WRAP(cWinViewControl__Init,                     W_ViewControlInit, o_ViewControlInit),
-    WRAP(cWinViewControl__UpdateViewFromCPState,    W_UpdateViewFromCPState, o_UpdateViewFromCPState),
+    JMP_STUB(UV_Tail1,                              S_UpdateViewEnd),
+    JMP_STUB(UV_Tail2,                              S_UpdateViewEnd),
 };
 const size_t g_nPanelHooks = sizeof g_PanelHooks / sizeof g_PanelHooks[0];

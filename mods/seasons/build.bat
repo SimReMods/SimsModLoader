@@ -18,3 +18,7 @@ set OBJS=build\seasons.obj build\SeasonsCore.obj build\SeasonsCareers.obj build\
 cl /nologo /Brepro /c /MT /GS /EHsc /O2 /Oy- /std:c++17 /W3 /wd4996 /wd4624 /Fobuild\ %SRCS% || exit /b 1
 link /nologo /Brepro /DLL /MACHINE:X86 /OPT:REF /OPT:ICF /OUT:build\seasons_steam.dll %OBJS% build\version.res kernel32.lib user32.lib || exit /b 1
 echo built build\seasons_steam.dll (version %V%)
+if not exist build\ea mkdir build\ea
+cl /nologo /Brepro /c /MT /GS /EHsc /O2 /Oy- /std:c++17 /W3 /wd4996 /wd4624 /DGAME_EA=1 /Fobuild\ea\ %SRCS% || exit /b 1
+link /nologo /Brepro /DLL /MACHINE:X86 /OPT:REF /OPT:ICF /OUT:build\ea\seasons_ea.dll %OBJS:build\=build\ea\% build\version.res kernel32.lib user32.lib || exit /b 1
+echo built build\ea\seasons_ea.dll (version %V%)

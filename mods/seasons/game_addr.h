@@ -1,5 +1,4 @@
-// game_addr.h - every Sims.exe address the seasons mod uses, in one table (link-time VAs, base 0x400000; Legacy
-// Collection 1.10.7.0, Steam).
+// game_addr.h - every Sims.exe address the seasons mod uses (link-time VAs, base 0x400000; Legacy Collection, Steam).
 //
 //   GA_FN(name, va)                    a function ("A__B" is A::B, "A___B" is A::~B)
 //   GA_DATA(name, va)                  a global
@@ -34,7 +33,6 @@ GA_FN(cWinVitaBtnSolo__GetCurrentSuitIndex,         0x4fa630)
 GA_FN(cWinVitaBtnSolo__PreviousSuit,                0x4fa960)
 GA_FN(cWinVitaBtnSolo__NextSuit,                    0x4fa860)
 GA_FN(cWinVitaBtnSolo__SetPerson,                   0x4fac90)
-GA_FN(Neighbor__GetPersistentDataFields,            0x5ab3b0)
 
 // the extra careers, their job panel art and portraits
 GA_FN(LoadCareers,                                  0x592770)
@@ -53,10 +51,11 @@ GA_FN(ObjectFolder__GetDownloadDirectories,         0x573080)
 GA_FN(ObjectFolder__AddSelector,                    0x571ce0)
 // the season icon in the control panel
 GA_FN(cWinViewControl__Init,                        0x4f5350)
-GA_FN(cWinViewControl__UpdateViewFromCPState,       0x4f8ee0)
 
 // ---- functions that contain a patch site ----
 GA_FN(TerrainTileScratch__EmitAll,                  0x6a5e30)
+GA_FN(Neighbor__GetPersistentDataFields,            0x5ab3b0)    // entry signature-checked by visit_lots: patched inside
+GA_FN(cWinViewControl__UpdateViewFromCPState,       0x4f8ee0)    // entry detoured by 4 Stories: patched inside
 GA_FN(cXPerson__TryGotoRoutingSlot_slot,            0x5f7950)
 
 // ---- functions the mod calls ----
@@ -167,6 +166,9 @@ GA_FN(cTSWin__TSWinMoveTo,                          0x4bc1e0)    // (const cTSPo
 
 // the CRT's dynamic_cast helper, as called by the game's own dynamic_cast<cColorSwatch *> in cTerrain::SetColor
 GA_CRT(RTDynamicCast,                               0x7ab967,   0x5787ae)
+// the exe's operator new / sized operator delete (the mod's own new / delete go to them: one heap with the game)
+GA_CRT(OperatorNew,                                 0x7a78be,   0x5929a4)    // as called in LoadCareers
+GA_CRT(OperatorDelete,                              0x7a74ef,   0x5f7b66)    // as called in TryGotoRoutingSlot
 GA_RTTI(TD_cXObject,                                0xa5c180,   ".?AVcXObject@@")
 GA_RTTI(TD_cXPerson,                                0xa5c198,   ".?AVcXPerson@@")
 GA_RTTI(TD_cTerrainRenderer,                        0xa5c65c,   ".?AVcTerrainRenderer@@")
@@ -197,6 +199,8 @@ GA_DATA(g_SuitNames,                                0xa73604)
 GA_DATA(g_SwatchParamsActive,                       0xa51a50)
 GA_DATA(g_Careers,                                  0xa72bec)
 GA_DATA(g_ImageResDescriptor,                       0xa52d98)
+GA_DATA(s_PersistentFields,                         0xa72f68)    // Neighbor::GetPersistentDataFields' list
+GA_DATA(s_nPersistentFieldsVersion,                 0xa72f78)
 
 // ---- patch sites ----
 // TerrainTileScratch::EmitAll inlines BuildVertexColors; both `call EmitQuad` after it (the first reader of the four
@@ -208,3 +212,11 @@ GA_CALL(EA_EmitQuad2,     0x6a6246, TerrainTileScratch__EmitAll, TerrainTileScra
 GA_CODE(GRS_State2,       0x5f7d96, 6, cXPerson__TryGotoRoutingSlot_slot)
 GA_LABEL(GRS_State2Next,  0x5f7d9c, cXPerson__TryGotoRoutingSlot_slot)
 GA_LABEL(GRS_Yield,       0x5f8b55, cXPerson__TryGotoRoutingSlot_slot)
+// Neighbor::GetPersistentDataFields: the two ends of the path that builds the list (`mov [s_nPersistentFieldsVersion],
+// edi`, 6 bytes each; the cached path returns without passing them) call the mod, which appends the seasons fields
+GA_CODE(PDF_Built1,       0x5ac133, 6, Neighbor__GetPersistentDataFields)
+GA_CODE(PDF_Built2,       0x5ac14d, 6, Neighbor__GetPersistentDataFields)
+// cWinViewControl::UpdateViewFromCPState: its two epilogues (`pop edi; pop esi; pop ebx; mov esp, ebp`, 5 bytes, then
+// `pop ebp; ret 4`; edi = this) jump to the mod, which updates the season icon and returns for the function
+GA_CODE(UV_Tail1,         0x4f97d1, 5, cWinViewControl__UpdateViewFromCPState)
+GA_CODE(UV_Tail2,         0x4f97ee, 5, cWinViewControl__UpdateViewFromCPState)
