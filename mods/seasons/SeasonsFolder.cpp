@@ -126,34 +126,87 @@ static void __fastcall W_NewFileAdded(ObjectFolder *f, void *, StackString<260> 
 // ObjectFolder::GetDownloadDirectories: Seasons objects count as downloads here, so their folders join the sound,
 // skin, texture and animation search paths like Downloads (same walk as the original, for our objects)
 #if GAME_CC
-// 2003: the animation manager loads every .cmx of a download folder through the file manager, which lists the entries
-// of a mapped .far too, but it cannot open an animation stored in a .far (it gets no stream and crashes). So a Seasons
-// folder joins the search paths only when its objects are loose files and no .far lies in it; packed Seasons content
-// keeps its objects (the object scan reads .far files) but not its animations / skins, and the log says so.
-static bool LooseAnimationDir(const StackString<260> &filePath, const StackString<260> &dir)
+// 2003: the animation manager loads every animation / skin of a download folder through the file manager, which lists
+// the entries of a mapped .far too, but it cannot open an animation stored in a .far (it gets no stream and crashes).
+// So a Seasons folder joins the search paths unless a .far in it holds animations or skins (.cmx, .bcf, .cfp, .skn);
+// a .far of objects only is fine (the object scan reads it; the animations lie loose next to it). Read from each .far's
+// directory (FAR version 1: "FAR!byAZ", version, directory offset; then count and entries {size, size, offset, name
+// length, name}).
+static bool FarHasAnimations(const char *pszFar)
 {
-    DWORD nAttr = GetFileAttributesA(filePath.c_str());
-    bool bLoose = nAttr != INVALID_FILE_ATTRIBUTES && !(nAttr & FILE_ATTRIBUTE_DIRECTORY);
-    if (bLoose)
+    HANDLE h = CreateFileA(pszFar, GENERIC_READ, FILE_SHARE_READ, 0, OPEN_EXISTING, 0, 0);
+    if (h == INVALID_HANDLE_VALUE)
+        return false;
+    bool bAnim = false;
+    DWORD nSize = GetFileSize(h, 0), nGot = 0;
+    unsigned char hdr[16];
+    unsigned nVersion = 0, nDir = 0;
+    if (ReadFile(h, hdr, 16, &nGot, 0) && nGot == 16 && !memcmp(hdr, "FAR!byAZ", 8))
     {
-        char szPattern[MAX_PATH + 8];
-        sprintf_s(szPattern, "%s*.far", dir.c_str());
-        WIN32_FIND_DATAA fd;
-        HANDLE h = FindFirstFileA(szPattern, &fd);
-        if (h != INVALID_HANDLE_VALUE)
+        memcpy(&nVersion, hdr + 8, 4);
+        memcpy(&nDir, hdr + 12, 4);
+    }
+    if (nVersion == 1 && nDir < nSize && SetFilePointer(h, nDir, 0, FILE_BEGIN) == nDir)
+    {
+        std::vector<unsigned char> dirBytes(nSize - nDir);
+        if (ReadFile(h, dirBytes.data(), (DWORD)dirBytes.size(), &nGot, 0) && nGot == dirBytes.size() && nGot >= 4)
         {
-            FindClose(h);
-            bLoose = false;
+            unsigned nCount;
+            memcpy(&nCount, dirBytes.data(), 4);
+            size_t o = 4;
+            for (unsigned i = 0; i < nCount && o + 16 <= dirBytes.size() && !bAnim; i++)
+            {
+                unsigned nLen;
+                memcpy(&nLen, &dirBytes[o + 12], 4);
+                o += 16;
+                if (o + nLen > dirBytes.size())
+                    break;
+                std::string name((const char *)&dirBytes[o], nLen);
+                o += nLen;
+                size_t nDot = name.rfind('.');
+                const char *pszExt = nDot == std::string::npos ? "" : name.c_str() + nDot;
+                bAnim = !_stricmp(pszExt, ".cmx") || !_stricmp(pszExt, ".bcf") || !_stricmp(pszExt, ".cfp") ||
+                        !_stricmp(pszExt, ".skn");
+            }
         }
     }
+    CloseHandle(h);
+    return bAnim;
+}
+
+static bool LooseAnimationDir(const StackString<260> &dir)
+{
+    static std::string s_dir;                           // the last folder checked, and the answer (asked per object)
+    static bool s_bDirOk;
+    if (!_stricmp(s_dir.c_str(), dir.c_str()))
+        return s_bDirOk;
+    s_dir = dir.c_str();
+    char szPattern[MAX_PATH + 8];
+    sprintf_s(szPattern, "%s*.far", dir.c_str());
+    WIN32_FIND_DATAA fd;
+    HANDLE h = FindFirstFileA(szPattern, &fd);
+    bool bOk = true;
+    if (h != INVALID_HANDLE_VALUE)
+    {
+        do
+        {
+            char szFar[MAX_PATH + 8];
+            sprintf_s(szFar, "%s%s", dir.c_str(), fd.cFileName);
+            if (FarHasAnimations(szFar))
+                bOk = false;
+        } while (bOk && FindNextFileA(h, &fd));
+        FindClose(h);
+    }
     static bool s_bLogged;
-    if (!bLoose && !s_bLogged)
+    if (!bOk && !s_bLogged)
     {
         s_bLogged = true;
-        Seasons_Log("%s: packed in a .far, which this game cannot load animations from: not an animation / skin folder "
-                    "(unpack the Seasons content for raincoats, umbrellas and object animations)", dir.c_str());
+        Seasons_Log("%s: a .far there holds animations or skins, which this game cannot load from a .far: not an "
+                    "animation / skin folder (unpack the Seasons content for raincoats, umbrellas and object animations)",
+                    dir.c_str());
     }
-    return bLoose;
+    s_bDirOk = bOk;
+    return bOk;
 }
 #endif
 
@@ -181,7 +234,7 @@ static void __fastcall W_GetDownloadDirectories(ObjectFolder *f, void *, GVec<St
         if (itDir == dirs.end())
 #if GAME_CC
         {
-            if (!LooseAnimationDir(filePath, dir))
+            if (!LooseAnimationDir(dir))
                 continue;
             dirs.PushBack(A::PathVec__push_back, dir);  // the game's vector: grown by the exe's own push_back
         }
