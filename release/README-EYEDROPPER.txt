@@ -1,5 +1,5 @@
-Eyedropper mod for The Sims Legacy Collection (Steam only, version 1.10.7.0 only).
-WILL NOT WORK WITH COMLETE COLLECTION, WILL NOT WORK WITH EA VERSION, WILL NOT WORK WITH CRACKED VERSIONS.
+Eyedropper mod {VERSION} for {GAME}.
+THIS ZIP IS ONLY FOR {GAME_UPPER}. For another version of the game download that version's zip{CRACKED}.
 
 In build and buy mode, click the eyedropper button (below undo / redo in the build panel) or press E, then click
 something on the lot: an object, a floor or a wall. Its catalog entry gets selected - the object's catalog page with the
@@ -8,7 +8,7 @@ wall tool with that wall type). Esc puts the previous tool back. The mod changes
 
 Install: extract this zip into the game folder (the one with Sims.exe), keeping the folder structure:
   winmm.dll                                 the mod loader (a proxy of the system winmm.dll)
-  mods\eyedropper_steam.dll                 the mod
+  mods\{DLL}                       the mod
   UIGraphics\Res_Eyedropper.RT              registers the button art (UIGraphics.far is untouched)
   UIGraphics\Res_Eyedropper.h               its resource id
   UIGraphics\Eyedropper\EyedropperBtn.bmp   the build panel button
@@ -16,7 +16,7 @@ Install: extract this zip into the game folder (the one with Sims.exe), keeping 
 
 Uninstall: delete these files from the game folder:
   winmm.dll                (keep it if another mod in the mods folder uses it)
-  mods\eyedropper_steam.dll
+  mods\{DLL}
   mods\eyedropper.dll  (older versions of the mod)
   UIGraphics\Res_Eyedropper.RT
   UIGraphics\Res_Eyedropper.h

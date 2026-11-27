@@ -181,7 +181,7 @@ bool Seasons_LotFollowsSeasons()
 // the controller's calendar (attribute numbers of SeasonsController/module.simc `attr` list: 0 c_season_mode,
 // 3 c_season_len, 6 c_visit_day, 7 c_visit_base, 8 c_visit_len, 9 c_visit_forced, 31 c_visit_season, 41 c_day_offset,
 // 43 c_holiday_force; holidays are days 7 .. 8 of a season)
-static const unsigned int kSeasonsControllerGUID = 0x4872FA80;
+static const unsigned int kSeasonsControllerGUID = 0x80AD9D75;
 static bool CalIsHoliday(int nDay, int nLen, int nForceDay)
 {
     int d = (nDay - 1) % nLen + 1;

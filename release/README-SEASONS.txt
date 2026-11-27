@@ -1,4 +1,4 @@
-Seasons mod for The Sims Legacy Collection - the engine part of "The Sims: Seasons".
+Seasons mod {VERSION} for {GAME} - the engine part of "The Sims: Seasons".
 
 DO NOT INSTALL THIS ZIP ON YOUR OWN. IT IS NOT A COMPLETE MOD.
 The files Seasons needs (objects, careers, clothes, art) and the installer are shipped in
@@ -10,7 +10,4 @@ Seasons objects, the ExpansionPack8 objects folder and the extra careers of Expa
 
 Contents:
   winmm.dll                 the mod loader (a proxy of the system winmm.dll)
-  mods\seasons_steam.dll    for The Sims Legacy Collection 1.10.7.0 from Steam
-  mods\seasons_ea.dll       for The Sims Legacy Collection 1.10.7 from the EA app
-  mods\seasons_cc.dll       for The Sims Complete Collection (2003)
-The loader starts only the one made for the game it runs in.
+  mods\{DLL}       the mod, for {GAME}

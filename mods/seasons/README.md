@@ -7,7 +7,7 @@ snow locations for Seasons objects (find_location_for modes 7..10), the seasons 
 portraits included).
 
 **Do not install it on its own**: the objects, careers, clothes and art it works with are shipped by the Seasons
-installer, which downloads this mod's release zip (`sims-seasons-DO-NOT-DOWNLOAD.zip`).
+installer, which downloads this mod's release zip for the game (`seasons_<steam|ea|cc>-DO-NOT-DOWNLOAD.zip`).
 
 ## Files
 
